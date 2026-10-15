@@ -40,3 +40,106 @@ resource "aws_security_group_rule" "alb_health_check_port" {
   source_security_group_id = var.alb_security_group_id
   security_group_id        = aws_security_group.this.id
 }
+
+# Declarative user rules - terraform-aws-eks style. Cover bridge-mode host
+# ports (bound on the node) and fixed awsvpc task ports alike, since this SG
+# is attached to both.
+resource "aws_vpc_security_group_ingress_rule" "custom" {
+  for_each = var.task_sg_ingress_rules
+
+  cidr_ipv4                    = each.value.cidr_ipv4
+  cidr_ipv6                    = each.value.cidr_ipv6
+  description                  = each.value.description
+  from_port                    = each.value.from_port
+  ip_protocol                  = each.value.ip_protocol
+  prefix_list_id               = each.value.prefix_list_id
+  referenced_security_group_id = coalesce(each.value.self, false) ? aws_security_group.this.id : each.value.referenced_security_group_id
+  security_group_id            = aws_security_group.this.id
+  tags = merge(
+    local.tagger_tags["this"],
+    { "Name" = coalesce(each.value.name, "${var.name}-tasks-${each.key}") },
+    each.value.tags,
+  )
+  to_port = try(coalesce(each.value.to_port, each.value.from_port), null)
+}
+
+# Auto-opened service ports: per-service opt-in (open_task_ports on the root
+# services entry). One rule per port mapping - bridge mode uses hostPort
+# (bound on the node; a missing/0 hostPort is a dynamic host port and is
+# skipped), awsvpc/Fargate use containerPort (task ENI) - both hit this same
+# SG. Dual-stack sources expand to one rule per address family (the rule
+# resource takes a single source selector), and identical protocol/port/source
+# combinations across services are deduplicated (AWS rejects duplicate
+# permissions on one SG). Rules are tagged with the contributing service
+# identities so each entry is traceable; they are destroyed with the services.
+locals {
+  service_port_rule_entries = flatten([
+    for k, v in var.services : try(v.open_task_ports, null) == null ? [] : [
+      for cd in try(v.container_definitions, []) : [
+        for pm in try(cd.portMappings, []) : {
+          service  = k
+          port     = try(v.network_mode, "awsvpc") == "bridge" ? try(pm.hostPort, 0) : try(pm.containerPort, 0)
+          protocol = try(pm.protocol, "tcp")
+          source   = v.open_task_ports
+        }
+      ]
+    ]
+  ])
+
+  service_port_rules_expanded = flatten([
+    for e in local.service_port_rule_entries : [
+      try(e.source.source_cidr_ipv4, null) == null ? [] : [merge(e, { key = "${e.protocol}:${e.port}:ipv4:${e.source.source_cidr_ipv4}", cidr_type = "ipv4", cidr = e.source.source_cidr_ipv4 })],
+      try(e.source.source_cidr_ipv6, null) == null ? [] : [merge(e, { key = "${e.protocol}:${e.port}:ipv6:${e.source.source_cidr_ipv6}", cidr_type = "ipv6", cidr = e.source.source_cidr_ipv6 })],
+    ]
+  ])
+
+  # Ellipsis groups by key - duplicate (protocol, port, source) combinations
+  # across services collapse into one rule.
+  service_port_rules_grouped = {
+    for r in local.service_port_rules_expanded : r.key => r...
+    if r.port != 0
+  }
+
+  service_port_rules = { for k, items in local.service_port_rules_grouped : k => items[0] }
+
+  service_port_rule_services = {
+    for k, items in local.service_port_rules_grouped : k => distinct([for r in items : r.service])
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "service_ports" {
+  for_each = local.service_port_rules
+
+  cidr_ipv4         = each.value.cidr_type == "ipv4" ? each.value.cidr : null
+  cidr_ipv6         = each.value.cidr_type == "ipv6" ? each.value.cidr : null
+  description       = "auto-opened for ${length(local.service_port_rule_services[each.key]) == 1 ? "service " : "services "}${var.name}/${join(",", local.service_port_rule_services[each.key])}"
+  from_port         = each.value.port
+  to_port           = each.value.port
+  ip_protocol       = each.value.protocol
+  security_group_id = aws_security_group.this.id
+  tags = merge(
+    local.tagger_tags["this"],
+    { "Name" = "${var.name}/${join(",", local.service_port_rule_services[each.key])}" },
+  )
+}
+
+resource "aws_vpc_security_group_egress_rule" "custom" {
+  for_each = var.task_sg_egress_rules
+
+  cidr_ipv4                    = each.value.cidr_ipv4
+  cidr_ipv6                    = each.value.cidr_ipv6
+  description                  = each.value.description
+  from_port                    = try(coalesce(each.value.from_port, each.value.to_port), null)
+  ip_protocol                  = each.value.ip_protocol
+  prefix_list_id               = each.value.prefix_list_id
+  referenced_security_group_id = coalesce(each.value.self, false) ? aws_security_group.this.id : each.value.referenced_security_group_id
+  security_group_id            = aws_security_group.this.id
+  tags = merge(
+    local.tagger_tags["this"],
+    { "Name" = coalesce(each.value.name, "${var.name}-tasks-${each.key}") },
+    each.value.tags,
+  )
+  # Unlike the ingress rule resource, egress does not default to_port to
+  # from_port - apply the same fallback so single-port rules work.
+  to_port = try(coalesce(each.value.to_port, each.value.from_port), null)
+}
