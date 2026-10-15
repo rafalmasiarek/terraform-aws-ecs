@@ -9,11 +9,26 @@ locals {
     }
   }
 
-  execution_role_arn = coalesce(var.execution_role_arn, var.default_execution_role_arn)
-
   # launch_type and capacity_provider_strategy are mutually exclusive on
   # aws_ecs_service - a non-empty strategy always wins.
   use_capacity_provider_strategy = length(var.capacity_provider_strategy) > 0
+
+  daemon = var.scheduling_strategy == "DAEMON"
+
+  task_execution_role_created = try(var.task_execution_role.create, null) != null
+  task_role_created           = try(var.task_role.create, null) != null
+
+  execution_role_arn = var.execution_role_arn != null ? var.execution_role_arn : coalesce(
+    local.task_execution_role_created ? try(module.task_execution_role[0].arn, null) : null,
+    try(var.task_execution_role.arn, null),
+    var.default_execution_role_arn,
+  )
+
+  task_role_arn = var.task_role_arn != null ? var.task_role_arn : local.task_role_created ? try(module.task_role[0].arn, null) : null
+
+  managed_ebs = var.managed_ebs_volume == null ? null : merge(var.managed_ebs_volume, {
+    role_arn = coalesce(var.managed_ebs_volume.role_arn, var.default_ecs_infrastructure_role_arn)
+  })
 }
 
 resource "aws_ecs_task_definition" "this" {
@@ -22,15 +37,43 @@ resource "aws_ecs_task_definition" "this" {
   memory                   = var.task_memory
   network_mode             = var.network_mode
   requires_compatibilities = var.requires_compatibilities
-  task_role_arn            = var.task_role_arn
+  task_role_arn            = local.task_role_arn
   execution_role_arn       = local.execution_role_arn
   container_definitions    = jsonencode(var.container_definitions)
+  pid_mode                 = var.pid_mode
+  ipc_mode                 = var.ipc_mode
+  enable_fault_injection   = var.enable_fault_injection
+
+  dynamic "runtime_platform" {
+    for_each = var.runtime_platform == null ? [] : [var.runtime_platform]
+    content {
+      cpu_architecture        = runtime_platform.value.cpu_architecture
+      operating_system_family = runtime_platform.value.operating_system_family
+    }
+  }
+
+  dynamic "ephemeral_storage" {
+    for_each = var.ephemeral_storage_gib == null ? [] : [1]
+    content {
+      size_in_gib = var.ephemeral_storage_gib
+    }
+  }
+
+  dynamic "proxy_configuration" {
+    for_each = var.proxy_configuration == null ? [] : [var.proxy_configuration]
+    content {
+      type           = proxy_configuration.value.type
+      container_name = proxy_configuration.value.container_name
+      properties     = proxy_configuration.value.properties
+    }
+  }
 
   dynamic "volume" {
     for_each = var.volumes
     content {
-      name      = volume.value.name
-      host_path = try(volume.value.host_path, null)
+      name                = volume.value.name
+      host_path           = try(volume.value.host_path, null)
+      configure_at_launch = try(volume.value.configure_at_launch, null)
 
       dynamic "efs_volume_configuration" {
         for_each = try([volume.value.efs_volume_configuration], [])
@@ -39,6 +82,43 @@ resource "aws_ecs_task_definition" "this" {
           root_directory          = try(efs_volume_configuration.value.root_directory, null)
           transit_encryption      = try(efs_volume_configuration.value.transit_encryption, null)
           transit_encryption_port = try(efs_volume_configuration.value.transit_encryption_port, null)
+        }
+      }
+
+      dynamic "docker_volume_configuration" {
+        for_each = try([volume.value.docker_volume_configuration], [])
+        content {
+          autoprovision = try(docker_volume_configuration.value.autoprovision, null)
+          driver        = try(docker_volume_configuration.value.driver, null)
+          driver_opts   = try(docker_volume_configuration.value.driver_opts, null)
+          labels        = try(docker_volume_configuration.value.labels, null)
+          scope         = try(docker_volume_configuration.value.scope, null)
+        }
+      }
+
+      dynamic "fsx_windows_file_server_volume_configuration" {
+        for_each = try([volume.value.fsx_windows_file_server_volume_configuration], [])
+        content {
+          file_system_id = fsx_windows_file_server_volume_configuration.value.file_system_id
+          root_directory = try(fsx_windows_file_server_volume_configuration.value.root_directory, null)
+
+          dynamic "authorization_config" {
+            for_each = try(fsx_windows_file_server_volume_configuration.value.authorization_config, null) == null ? [] : [1]
+            content {
+              credentials_parameter = fsx_windows_file_server_volume_configuration.value.authorization_config.credentials_parameter
+              domain                = try(fsx_windows_file_server_volume_configuration.value.authorization_config.domain, null)
+            }
+          }
+        }
+      }
+
+      dynamic "s3files_volume_configuration" {
+        for_each = try([volume.value.s3files_volume_configuration], [])
+        content {
+          access_point_arn        = try(s3files_volume_configuration.value.access_point_arn, null)
+          file_system_arn         = try(s3files_volume_configuration.value.file_system_arn, null)
+          root_directory          = try(s3files_volume_configuration.value.root_directory, null)
+          transit_encryption_port = try(s3files_volume_configuration.value.transit_encryption_port, null)
         }
       }
     }
@@ -51,9 +131,12 @@ resource "aws_ecs_service" "this" {
   name            = var.name
   cluster         = var.cluster_id
   task_definition = aws_ecs_task_definition.this.arn
-  desired_count   = var.desired_count
+  desired_count   = local.daemon ? null : var.desired_count
 
-  launch_type = local.use_capacity_provider_strategy ? null : var.launch_type
+  launch_type             = local.use_capacity_provider_strategy ? null : var.launch_type
+  scheduling_strategy     = var.scheduling_strategy
+  enable_ecs_managed_tags = var.enable_ecs_managed_tags
+  propagate_tags          = var.propagate_tags
 
   dynamic "capacity_provider_strategy" {
     for_each = var.capacity_provider_strategy
@@ -64,12 +147,81 @@ resource "aws_ecs_service" "this" {
     }
   }
 
-  deployment_maximum_percent         = var.deployment_maximum_percent
-  deployment_minimum_healthy_percent = var.deployment_minimum_healthy_percent
+  deployment_maximum_percent         = local.daemon ? 100 : var.deployment_maximum_percent
+  deployment_minimum_healthy_percent = local.daemon ? 0 : var.deployment_minimum_healthy_percent
   health_check_grace_period_seconds  = var.health_check_grace_period_seconds
   enable_execute_command             = var.enable_execute_command
   wait_for_steady_state              = var.wait_for_steady_state
   force_new_deployment               = var.force_new_deployment
+
+  dynamic "deployment_circuit_breaker" {
+    for_each = var.deployment_circuit_breaker == null ? [] : [var.deployment_circuit_breaker]
+    content {
+      enable   = deployment_circuit_breaker.value.enable
+      rollback = deployment_circuit_breaker.value.rollback
+    }
+  }
+
+  dynamic "deployment_controller" {
+    for_each = var.deployment_controller_type == null ? [] : [var.deployment_controller_type]
+    content {
+      type = deployment_controller.value
+    }
+  }
+
+  dynamic "service_connect_configuration" {
+    for_each = var.service_connect == null ? [] : [var.service_connect]
+    content {
+      enabled   = service_connect_configuration.value.enabled
+      namespace = service_connect_configuration.value.namespace
+
+      dynamic "service" {
+        for_each = service_connect_configuration.value.service
+        content {
+          discovery_name        = service.value.discovery_name
+          port_name             = try(service.value.port_name, null)
+          ingress_port_override = try(service.value.ingress_port_override, null)
+
+          dynamic "client_alias" {
+            for_each = service.value.client_alias
+            content {
+              dns_name = client_alias.value.dns_name
+              port     = client_alias.value.port
+            }
+          }
+        }
+      }
+    }
+  }
+
+  dynamic "volume_configuration" {
+    for_each = local.managed_ebs == null ? [] : [local.managed_ebs]
+    content {
+      name = volume_configuration.value.volume_name
+
+      managed_ebs_volume {
+        role_arn                   = volume_configuration.value.role_arn
+        encrypted                  = volume_configuration.value.encrypted
+        volume_type                = try(volume_configuration.value.volume_type, null)
+        size_in_gb                 = try(volume_configuration.value.size_in_gb, null)
+        iops                       = try(volume_configuration.value.iops, null)
+        throughput                 = try(volume_configuration.value.throughput, null)
+        snapshot_id                = try(volume_configuration.value.snapshot_id, null)
+        kms_key_id                 = try(volume_configuration.value.kms_key_id, null)
+        file_system_type           = try(volume_configuration.value.file_system_type, null)
+        volume_initialization_rate = try(volume_configuration.value.volume_initialization_rate, null)
+
+        dynamic "tag_specifications" {
+          for_each = try(volume_configuration.value.tag_specifications, [])
+          content {
+            resource_type  = tag_specifications.value.resource_type
+            tags           = try(tag_specifications.value.tags, null)
+            propagate_tags = try(tag_specifications.value.propagate_tags, null)
+          }
+        }
+      }
+    }
+  }
 
   dynamic "network_configuration" {
     for_each = var.network_mode == "awsvpc" ? [var.network_configuration] : []
@@ -120,4 +272,45 @@ resource "aws_ecs_service" "this" {
   lifecycle {
     ignore_changes = [desired_count]
   }
+}
+
+data "aws_iam_policy_document" "ecs_tasks_assume" {
+  count = local.task_execution_role_created || local.task_role_created ? 1 : 0
+
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}
+
+module "task_execution_role" {
+  source = "../iam-role"
+  count  = local.task_execution_role_created ? 1 : 0
+
+  name                        = var.task_execution_role.create.name
+  assume_role_policy_document = data.aws_iam_policy_document.ecs_tasks_assume[0].json
+  permissions_boundary_arn    = var.task_execution_role.create.permission_boundary_arn
+  managed_policy_arns = concat(
+    ["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"],
+    var.task_execution_role.create.managed_policy_arns,
+  )
+  inline_policies = var.task_execution_role.create.inline_policies
+  least_privilege = var.task_execution_role.create.least_privilege
+  tags            = local.tagger_tags["this"]
+}
+
+module "task_role" {
+  source = "../iam-role"
+  count  = local.task_role_created ? 1 : 0
+
+  name                        = var.task_role.create.name
+  assume_role_policy_document = data.aws_iam_policy_document.ecs_tasks_assume[0].json
+  permissions_boundary_arn    = var.task_role.create.permission_boundary_arn
+  managed_policy_arns         = var.task_role.create.managed_policy_arns
+  inline_policies             = var.task_role.create.inline_policies
+  least_privilege             = var.task_role.create.least_privilege
+  tags                        = local.tagger_tags["this"]
 }

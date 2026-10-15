@@ -18,9 +18,28 @@ module "service" {
   default_execution_role_arn = var.create_task_execution_role ? aws_iam_role.task_execution[0].arn : null
   volumes                    = try(each.value.volumes, [])
 
-  desired_count              = try(each.value.desired_count, 1)
+  scheduling_strategy        = try(each.value.scheduling_strategy, "REPLICA")
+  desired_count              = try(each.value.desired_count, try(each.value.scheduling_strategy, "REPLICA") == "DAEMON" ? null : 1)
   launch_type                = try(each.value.launch_type, "FARGATE")
   capacity_provider_strategy = try(each.value.capacity_provider_strategy, [])
+
+  deployment_circuit_breaker = try(each.value.deployment_circuit_breaker, null)
+  deployment_controller_type = try(each.value.deployment_controller_type, null)
+  enable_ecs_managed_tags    = try(each.value.enable_ecs_managed_tags, false)
+  propagate_tags             = try(each.value.propagate_tags, null)
+  service_connect            = try(each.value.service_connect, null)
+
+  runtime_platform                    = try(each.value.runtime_platform, null)
+  ephemeral_storage_gib               = try(each.value.ephemeral_storage_gib, null)
+  pid_mode                            = try(each.value.pid_mode, null)
+  ipc_mode                            = try(each.value.ipc_mode, null)
+  enable_fault_injection              = try(each.value.enable_fault_injection, false)
+  proxy_configuration                 = try(each.value.proxy_configuration, null)
+  managed_ebs_volume                  = try(each.value.managed_ebs_volume, null)
+  default_ecs_infrastructure_role_arn = var.create_ecs_infrastructure_role ? try(aws_iam_role.ecs_infrastructure[0].arn, null) : null
+
+  task_execution_role = try(each.value.task_execution_role, null)
+  task_role           = try(each.value.task_role, null)
 
   deployment_maximum_percent         = try(each.value.deployment_maximum_percent, 200)
   deployment_minimum_healthy_percent = try(each.value.deployment_minimum_healthy_percent, 100)
@@ -51,6 +70,10 @@ module "service" {
   memory_target_tracking     = try(each.value.memory_target_tracking, null)
   scale_in_cooldown_seconds  = try(each.value.scale_in_cooldown_seconds, 300)
   scale_out_cooldown_seconds = try(each.value.scale_out_cooldown_seconds, 60)
+
+  alb_target_tracking           = try(each.value.alb_target_tracking, null)
+  custom_metric_target_tracking = try(each.value.custom_metric_target_tracking, null)
+  scheduled_actions             = try(each.value.scheduled_actions, [])
 
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context

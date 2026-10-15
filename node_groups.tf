@@ -26,6 +26,9 @@ module "node_group" {
   max_size         = each.value.max_size
   desired_capacity = try(each.value.desired_capacity, null)
 
+  ecs_agent_config = try(each.value.ecs_agent_config, null)
+  iam              = try(each.value.iam, null)
+
   mixed_instances_policy = try(each.value.mixed_instances_policy, null)
   instance_refresh = try(each.value.instance_refresh, {
     strategy = "Rolling"
