@@ -1,3 +1,20 @@
+locals {
+  # Index keys (plan-known) so computed ARNs - e.g. an aws_iam_policy created
+  # in the same apply - can be attached. IAM AttachRolePolicy is idempotent,
+  # so a duplicated ARN degrades to a no-op instead of failing.
+  managed_policy_attachments = { for i, arn in var.managed_policy_arns : i => arn }
+
+  # Plan-known existence check: the rendered JSON is unknown while any scoped
+  # ARN is computed, so the count must come from the input structure.
+  least_privilege_present = length(concat(
+    var.least_privilege.ecr_registry_arns,
+    var.least_privilege.secretsmanager_secret_arns,
+    var.least_privilege.ssm_parameter_arns,
+    var.least_privilege.kms_key_arns,
+    var.least_privilege.route53_hosted_zone_arns,
+  )) > 0
+}
+
 module "least_privilege" {
   source = "../iam-policy-documents"
 
@@ -13,7 +30,7 @@ resource "aws_iam_role" "this" {
 }
 
 resource "aws_iam_role_policy_attachment" "managed" {
-  for_each = toset(var.managed_policy_arns)
+  for_each = local.managed_policy_attachments
 
   role       = aws_iam_role.this.name
   policy_arn = each.value
@@ -42,7 +59,7 @@ resource "aws_iam_role_policy" "inline" {
 }
 
 resource "aws_iam_role_policy" "least_privilege" {
-  count = module.least_privilege.json != "" ? 1 : 0
+  count = local.least_privilege_present ? 1 : 0
 
   name   = "least-privilege"
   role   = aws_iam_role.this.id

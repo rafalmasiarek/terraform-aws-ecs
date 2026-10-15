@@ -57,7 +57,7 @@ resource "aws_appautoscaling_policy" "alb_request_count" {
 
   target_tracking_scaling_policy_configuration {
     predefined_metric_specification {
-      predefined_metric_type = "ALBRequestCount"
+      predefined_metric_type = "ALBRequestCountPerTarget"
       resource_label         = var.alb_target_tracking.resource_label
     }
     target_value       = var.alb_target_tracking.target_value

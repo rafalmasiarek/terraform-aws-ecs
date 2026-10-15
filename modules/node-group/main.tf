@@ -53,9 +53,13 @@ locals {
     : merge({ auth = base64encode("${e.username}:${e.ref}") }, e.email != "" ? { email = e.email } : {})
   })
 
+  # Whole lines (KEY=value) are shell-quoted as single units - quoting only the
+  # value would leave the line exposed to word splitting / command expansion.
+  agent_env_joined = { for k, v in local.agent_env : k => "${k}=${v}" }
+
   shq = { for v in distinct(flatten([
-    [var.cluster_name],
-    [for k, v in local.agent_env : v],
+    ["ECS_CLUSTER=${var.cluster_name}"],
+    [values(local.agent_env_joined)],
     [local.registry_type],
     [for e in local.auth_entries : [e.registry, e.username, e.email, e.ref]],
     local.registry_auth == null ? [] : ["ECS_ENGINE_AUTH_DATA=${local.auth_data_static}"],
@@ -63,7 +67,7 @@ locals {
 
   agent_env_lines = [
     for k in sort(keys(local.agent_env)) :
-    "printf '%s\\n' '${k}=${local.shq[local.agent_env[k]]}'"
+    "printf '%s\\n' ${local.shq[local.agent_env_joined[k]]}"
   ]
 
   auth_wait_fn_tpl = <<-FN
@@ -142,7 +146,7 @@ FN
 #!/bin/bash
 set -euo pipefail
 {
-printf '%s\n' 'ECS_CLUSTER=${local.shq[var.cluster_name]}'
+printf '%s\n' ${local.shq["ECS_CLUSTER=${var.cluster_name}"]}
 ${join("\n", local.agent_env_lines)}
 } >> /etc/ecs/ecs.config
 ${local.auth_block}
@@ -216,19 +220,25 @@ resource "aws_iam_instance_profile" "instance" {
 locals {
   agent_start_unit_name = "terraform-ecs-agent-start"
 
-  # Appended after the user's own entries (in order) - separate cloud-init
-  # parts, so user parts run first and are never touched: the config script
-  # only appends module-owned lines to /etc/ecs/ecs.config, and the start unit
-  # only enables/starts the packaged ecs unit (no unit files of its own, no
+  # The config script is appended after the user's own parts (in order) as a
+  # raw cloud-init part - the renderer emits shell_scripts parts BEFORE
+  # cloudinit_parts, so keeping it in cloudinit_parts preserves "user parts run
+  # first" (a user part may write registry_auth.password.file, which the script
+  # waits for). The user's entries are never touched: the config script only
+  # appends module-owned lines to /etc/ecs/ecs.config, and the start unit only
+  # enables/starts the packaged ecs unit (no unit files of its own, no
   # drop-ins). Start is queued non-blocking from runcmd: the unit is ordered
   # After=cloud-final.service, which is the very unit running runcmd, so a
   # blocking start would deadlock.
   node_group_cloudinit_config = merge(
     var.cloudinit_config,
     {
-      shell_scripts = concat(
-        try(var.cloudinit_config.shell_scripts, []),
-        [local.agent_config_script],
+      cloudinit_parts = concat(
+        try(var.cloudinit_config.cloudinit_parts, []),
+        [{
+          content_type = "text/x-shellscript"
+          content      = local.agent_config_script
+        }],
       )
       systemd_units = concat(
         try(var.cloudinit_config.systemd_units, []),
@@ -247,7 +257,7 @@ locals {
 
 module "nodes" {
   source  = "rafalmasiarek/ec2-autoscale-group/aws"
-  version = "0.2.0"
+  version = "0.2.1"
 
   name          = var.name
   ami_id        = local.resolved_ami_id

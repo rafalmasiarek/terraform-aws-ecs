@@ -37,7 +37,10 @@ locals {
   )
 
   docker_labels = length(var.docker_labels) > 0 ? var.docker_labels : null
-  firelens      = var.firelens_configuration == null ? null : { options = var.firelens_configuration.options }
+  firelens = var.firelens_configuration == null ? null : {
+    type    = var.firelens_configuration.type
+    options = var.firelens_configuration.options
+  }
 
   ulimits_list               = [for u in var.ulimits : { name = u.name, softLimit = u.soft_limit, hardLimit = u.hard_limit }]
   system_controls_list       = [for s in var.system_controls : { namespace = s.namespace, value = s.value }]

@@ -18,13 +18,22 @@ locals {
   task_execution_role_created = try(var.task_execution_role.create, null) != null
   task_role_created           = try(var.task_role.create, null) != null
 
-  execution_role_arn = var.execution_role_arn != null ? var.execution_role_arn : coalesce(
+  # coalesce() errors when every candidate is null, so the first non-null
+  # wins via compact(); an all-null result stays null.
+  execution_role_arn_candidates = compact([
+    var.execution_role_arn,
     local.task_execution_role_created ? try(module.task_execution_role[0].arn, null) : null,
     try(var.task_execution_role.arn, null),
     var.default_execution_role_arn,
-  )
+  ])
+  execution_role_arn = try(local.execution_role_arn_candidates[0], null)
 
-  task_role_arn = var.task_role_arn != null ? var.task_role_arn : local.task_role_created ? try(module.task_role[0].arn, null) : null
+  task_role_arn_candidates = compact([
+    var.task_role_arn,
+    local.task_role_created ? try(module.task_role[0].arn, null) : null,
+    try(var.task_role.arn, null),
+  ])
+  task_role_arn = try(local.task_role_arn_candidates[0], null)
 
   managed_ebs = var.managed_ebs_volume == null ? null : merge(var.managed_ebs_volume, {
     role_arn = coalesce(var.managed_ebs_volume.role_arn, var.default_ecs_infrastructure_role_arn)
@@ -131,7 +140,9 @@ resource "aws_ecs_service" "this" {
   name            = var.name
   cluster         = var.cluster_id
   task_definition = aws_ecs_task_definition.this.arn
-  desired_count   = local.daemon ? null : var.desired_count
+  # coalesce: a REPLICA service with no explicit count keeps the historical
+  # default of 1 (the provider's own default is 0).
+  desired_count = local.daemon ? null : coalesce(var.desired_count, 1)
 
   launch_type             = local.use_capacity_provider_strategy ? null : var.launch_type
   scheduling_strategy     = var.scheduling_strategy

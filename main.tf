@@ -21,8 +21,10 @@ locals {
   exec_kms_create    = try(var.exec_command_s3.kms.create, false) == true
   exec_kms_key_id    = local.exec_kms_create ? try(aws_kms_key.exec[0].id, null) : try(var.exec_command_s3.kms.key_id, null)
 
-  exec_logging_enabled = var.create_cloudwatch_log_group || var.exec_command_s3 != null
-  exec_cwl_name        = var.create_cloudwatch_log_group ? try(aws_cloudwatch_log_group.this[0].name, null) : var.cloudwatch_log_group_name
+  # An explicitly supplied existing log group also enables exec logging -
+  # otherwise the destination is returned in outputs but never configured.
+  exec_logging_enabled = var.create_cloudwatch_log_group || var.cloudwatch_log_group_name != null || var.exec_command_s3 != null
+  exec_cwl_name        = var.create_cloudwatch_log_group ? try(aws_cloudwatch_log_group.this[0].name, null) : coalesce(var.cloudwatch_log_group_name, local.cloudwatch_log_group_name)
 
   exec_s3_bucket_arn = local.exec_s3_bucket_name == null ? null : (
     local.exec_s3_bucket_create ? try(aws_s3_bucket.exec[0].arn, null) : "arn:aws:s3:::${local.exec_s3_bucket_name}"

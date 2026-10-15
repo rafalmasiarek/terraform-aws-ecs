@@ -40,6 +40,7 @@ module "node_group" {
   cloudinit_config      = try(each.value.cloudinit_config, {})
 
   autoscaling_policies_enabled = try(each.value.autoscaling_policies_enabled, false)
+  protect_from_scale_in        = try(each.value.protect_from_scale_in, true)
 
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context

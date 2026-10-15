@@ -11,12 +11,25 @@ locals {
 data "aws_iam_policy_document" "this" {
   count = length(local.least_privilege_arns) > 0 ? 1 : 0
 
+  # ecr:GetAuthorizationToken only accepts Resource "*", so the token and the
+  # repository-scoped pull actions (incl. layer downloads) need separate
+  # statements.
+  dynamic "statement" {
+    for_each = length(var.least_privilege.ecr_registry_arns) > 0 ? [1] : []
+    content {
+      sid       = "EcrPullToken"
+      effect    = "Allow"
+      actions   = ["ecr:GetAuthorizationToken"]
+      resources = ["*"]
+    }
+  }
+
   dynamic "statement" {
     for_each = length(var.least_privilege.ecr_registry_arns) > 0 ? [1] : []
     content {
       sid       = "EcrPull"
       effect    = "Allow"
-      actions   = ["ecr:GetAuthorizationToken", "ecr:BatchGetImage", "ecr:BatchCheckLayerAvailability"]
+      actions   = ["ecr:BatchGetImage", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer"]
       resources = var.least_privilege.ecr_registry_arns
     }
   }
@@ -34,9 +47,11 @@ data "aws_iam_policy_document" "this" {
   dynamic "statement" {
     for_each = length(var.least_privilege.ssm_parameter_arns) > 0 ? [1] : []
     content {
-      sid       = "SsmGetParameter"
-      effect    = "Allow"
-      actions   = ["ssm:GetParameter"]
+      sid    = "SsmGetParameter"
+      effect = "Allow"
+      # Container secrets are read with the batch action (ssm:GetParameters),
+      # not ssm:GetParameter - both are needed.
+      actions   = ["ssm:GetParameter", "ssm:GetParameters"]
       resources = var.least_privilege.ssm_parameter_arns
     }
   }

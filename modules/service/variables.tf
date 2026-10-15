@@ -65,7 +65,7 @@ variable "volumes" {
 }
 
 variable "desired_count" {
-  description = "REPLICA only - DAEMON services must not set it (null)."
+  description = "REPLICA only - defaults to 1; DAEMON services must not set it (null)."
   type        = number
   default     = null
 }
@@ -117,18 +117,18 @@ variable "enable_ecs_managed_tags" {
 }
 
 variable "propagate_tags" {
-  description = "Propagate tags from task definition or service to the task: \"CONTAINER\", \"SERVICE\" or \"TASK\"."
+  description = "Propagate tags from the service or task definition to the task: \"SERVICE\", \"TASK_DEFINITION\" or \"NONE\"."
   type        = string
   default     = null
 
   validation {
-    condition     = var.propagate_tags == null ? true : contains(["CONTAINER", "SERVICE", "TASK"], var.propagate_tags)
-    error_message = "propagate_tags must be \"CONTAINER\", \"SERVICE\" or \"TASK\"."
+    condition     = var.propagate_tags == null ? true : contains(["SERVICE", "TASK_DEFINITION", "NONE"], var.propagate_tags)
+    error_message = "propagate_tags must be \"SERVICE\", \"TASK_DEFINITION\" or \"NONE\"."
   }
 }
 
 variable "service_connect" {
-  description = "ECS Service Connect configuration - requires network_mode = \"awsvpc\"."
+  description = "ECS Service Connect configuration - requires network_mode = \"awsvpc\" (Fargate) or \"bridge\" (EC2)."
   type = object({
     namespace = string
     enabled   = optional(bool, true)
@@ -145,16 +145,16 @@ variable "service_connect" {
   default = null
 
   validation {
-    condition     = var.service_connect == null ? true : var.network_mode == "awsvpc"
-    error_message = "service_connect requires network_mode = \"awsvpc\"."
+    condition     = var.service_connect == null ? true : contains(["awsvpc", "bridge"], var.network_mode)
+    error_message = "service_connect requires network_mode = \"awsvpc\" (Fargate) or \"bridge\" (EC2)."
   }
 
   validation {
-    condition = var.service_connect == null || !var.service_connect.enabled ? true : can(element([for _ in [1] : 1 if(
-      length(var.service_connect.service) > 0
-      && alltrue([for s in var.service_connect.service : length(s.client_alias) == 1])
+    condition = var.service_connect == null ? true : can(element([for _ in [1] : 1 if(
+      !var.service_connect.enabled
+      || alltrue([for s in var.service_connect.service : length(s.client_alias) == 1])
     )], 0))
-    error_message = "An enabled service_connect needs at least one service entry, and each entry needs exactly one client_alias (AWS requires at least one and allows at most one per service)."
+    error_message = "Each enabled service_connect service entry needs exactly one client_alias (AWS allows at most one per entry). Client-only services can omit the service list entirely."
   }
 }
 
@@ -527,9 +527,12 @@ variable "task_role" {
     error_message = "Use either task_role_arn or task_role, not both."
   }
 
+  # A task role is only strictly required for features that need it - ECS
+  # Exec. Fargate tasks that do not call AWS APIs (and have Exec disabled) run
+  # fine without a task role, so no launch-type-based requirement.
   validation {
-    condition     = (var.launch_type == "FARGATE" || anytrue([for s in var.capacity_provider_strategy : contains(["FARGATE", "FARGATE_SPOT"], s.capacity_provider)])) && var.task_role_arn == null && var.task_role == null ? false : true
-    error_message = "Fargate services require a task role - set task_role_arn or task_role (AWS rejects Fargate services without a valid taskRoleArn; EC2 services may omit it)."
+    condition     = var.enable_execute_command ? (var.task_role_arn != null || var.task_role != null) : true
+    error_message = "ECS Exec (enable_execute_command = true) requires a task role with SSM permissions - set task_role_arn or task_role."
   }
 }
 

@@ -25,6 +25,28 @@ locals {
       if try(c.password.kms_key_arn, null) != null
     ]
   ])
+
+  instance_role_sm_arns  = concat(var.instance_role_least_privilege.secretsmanager_secret_arns, local.instance_role_registry_sm_arns)
+  instance_role_kms_arns = concat(var.instance_role_least_privilege.kms_key_arns, local.instance_role_registry_kms_arns)
+
+  # Plan-known length check: the rendered policy JSON is unknown while any
+  # scoped ARN comes from a resource created in the same apply, so the inline
+  # policy's count must be derived from the input structure, not the JSON.
+  instance_role_least_privilege_arns = concat(
+    var.instance_role_least_privilege.ecr_registry_arns,
+    local.instance_role_sm_arns,
+    var.instance_role_least_privilege.ssm_parameter_arns,
+    local.instance_role_kms_arns,
+    var.instance_role_least_privilege.route53_hosted_zone_arns,
+  )
+
+  task_execution_least_privilege_arns = concat(
+    var.task_execution_role_least_privilege.ecr_registry_arns,
+    var.task_execution_role_least_privilege.secretsmanager_secret_arns,
+    var.task_execution_role_least_privilege.ssm_parameter_arns,
+    var.task_execution_role_least_privilege.kms_key_arns,
+    var.task_execution_role_least_privilege.route53_hosted_zone_arns,
+  )
 }
 
 data "aws_iam_policy_document" "ec2_assume_role" {
@@ -90,15 +112,15 @@ module "instance_least_privilege" {
 
   least_privilege = {
     ecr_registry_arns          = var.instance_role_least_privilege.ecr_registry_arns
-    secretsmanager_secret_arns = concat(var.instance_role_least_privilege.secretsmanager_secret_arns, local.instance_role_registry_sm_arns)
+    secretsmanager_secret_arns = local.instance_role_sm_arns
     ssm_parameter_arns         = var.instance_role_least_privilege.ssm_parameter_arns
-    kms_key_arns               = concat(var.instance_role_least_privilege.kms_key_arns, local.instance_role_registry_kms_arns)
+    kms_key_arns               = local.instance_role_kms_arns
     route53_hosted_zone_arns   = var.instance_role_least_privilege.route53_hosted_zone_arns
   }
 }
 
 resource "aws_iam_role_policy" "instance_least_privilege" {
-  count = var.create_instance_iam_role && try(module.instance_least_privilege[0].json, "") != "" ? 1 : 0
+  count = var.create_instance_iam_role && length(local.instance_role_least_privilege_arns) > 0 ? 1 : 0
 
   name   = "least-privilege"
   role   = aws_iam_role.instance[0].id
@@ -176,7 +198,7 @@ module "task_execution_least_privilege" {
 }
 
 resource "aws_iam_role_policy" "task_execution_least_privilege" {
-  count = var.create_task_execution_role && try(module.task_execution_least_privilege[0].json, "") != "" ? 1 : 0
+  count = var.create_task_execution_role && length(local.task_execution_least_privilege_arns) > 0 ? 1 : 0
 
   name   = "least-privilege"
   role   = aws_iam_role.task_execution[0].id

@@ -130,9 +130,15 @@ variable "docker_labels" {
 variable "firelens_configuration" {
   description = "FireLens log routing (e.g. splunk/syslog router container)."
   type = object({
+    type    = string
     options = map(string)
   })
   default = null
+
+  validation {
+    condition     = var.firelens_configuration == null ? true : contains(["fluentd", "fluentbit"], var.firelens_configuration.type)
+    error_message = "firelens_configuration.type must be \"fluentd\" or \"fluentbit\"."
+  }
 }
 
 variable "repository_credentials" {
