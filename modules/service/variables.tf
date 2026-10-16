@@ -36,7 +36,7 @@ variable "requires_compatibilities" {
   default     = ["FARGATE"]
 
   validation {
-    condition = alltrue([for c in var.requires_compatibilities : contains(["EC2", "FARGATE", "EXTERNAL", "MANAGED_INSTANCES"], c)])
+    condition     = alltrue([for c in var.requires_compatibilities : contains(["EC2", "FARGATE", "EXTERNAL", "MANAGED_INSTANCES"], c)])
     error_message = "requires_compatibilities may only contain \"EC2\", \"FARGATE\", \"EXTERNAL\", and/or \"MANAGED_INSTANCES\"."
   }
 }
