@@ -36,6 +36,8 @@ module "node_group" {
   block_device_mappings = try(each.value.block_device_mappings, [])
   cloudinit_config      = try(each.value.cloudinit_config, {})
 
+  force_delete = try(each.value.force_delete, false)
+
   autoscaling_policies_enabled = try(each.value.autoscaling_policies_enabled, false)
 
   use_tagger     = var.use_tagger

@@ -56,8 +56,14 @@ module "nodes" {
   associate_public_ip_address = var.associate_public_ip_address
   iam_instance_profile_name   = var.iam_instance_profile_name
   key_name                    = var.key_name
-  cloudinit_config            = local.node_group_cloudinit_config
-  block_device_mappings       = var.block_device_mappings
+  # The autoscale-group module forwards this as a wildcard passthrough to
+  # terraform-null-cloudinit (map of its inputs) - keep the map shape, but
+  # pin ssh_authorized_keys to a list: try() with a {} default would hand an
+  # empty object to a list(string) variable and fail the plan.
+  cloudinit_config = merge(local.node_group_cloudinit_config, {
+    ssh_authorized_keys = []
+  })
+  block_device_mappings = var.block_device_mappings
 
   min_size               = var.min_size
   max_size               = var.max_size
@@ -69,6 +75,7 @@ module "nodes" {
   # health check of its own, so EC2 (instance status) is the correct type.
   protect_from_scale_in = true
   health_check_type     = "EC2"
+  force_delete          = var.force_delete
 
   autoscaling_policies_enabled = var.autoscaling_policies_enabled
 

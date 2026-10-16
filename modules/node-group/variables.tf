@@ -79,6 +79,12 @@ variable "cloudinit_config" {
   default     = {}
 }
 
+variable "force_delete" {
+  description = "Destroy the ASG without waiting for instances to terminate (skips graceful drain). Useful for fast teardown of disposable environments."
+  type        = bool
+  default     = false
+}
+
 variable "autoscaling_policies_enabled" {
   type    = bool
   default = false

@@ -65,3 +65,20 @@ variable "services" {
   type        = any
   default     = {}
 }
+
+variable "cluster_addons" {
+  description = "ECS cluster infrastructure add-ons: traefik, opentelemetry, cloudwatch_agent, fluent_bit, node_exporter, cadvisor, falco, blackbox_exporter. Omit (null) to disable all. See docs/addons.md and modules/addons/variables.tf for the full schema and per-preset semantics."
+  type        = any
+  default     = null
+
+  # Unknown top-level keys are rejected here; unknown per-preset attributes
+  # fail the plan at the first HCL attribute access inside the module.
+  validation {
+    condition = var.cluster_addons == null ? true : alltrue([
+      for k in keys(var.cluster_addons) : contains(
+        ["traefik", "opentelemetry", "cloudwatch_agent", "fluent_bit",
+      "node_exporter", "cadvisor", "falco", "blackbox_exporter"], k)
+    ])
+    error_message = "cluster_addons: unknown preset. Valid keys: traefik, opentelemetry, cloudwatch_agent, fluent_bit, node_exporter, cadvisor, falco, blackbox_exporter."
+  }
+}
