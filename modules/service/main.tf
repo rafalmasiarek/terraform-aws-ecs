@@ -61,27 +61,12 @@ locals {
   # aws_ecs_service - a non-empty strategy always wins.
   use_capacity_provider_strategy = length(var.capacity_provider_strategy) > 0
 
-  # Auto-discovered container ports: every distinct containerPort across all
-  # containers in this task definition. These get ingress rules on the cluster
-  # SG (source: the SG itself) so the service is reachable from other cluster
-  # tasks and load balancers without manual security-group wiring. This is what
-  # prevents the "service listens on port Y but nothing opened it in the SG"
-  # outage - the port opens automatically when the service is created. Source
-  # is the cluster SG, not 0.0.0.0/0, so external traffic still has to go
-  # through a controlled entry point (traefik / ALB).
   service_container_ports = distinct(sort(concat([
     for c in var.container_definitions :
     [for pm in try(c.portMappings, []) : pm.containerPort]
   ]...)))
 
-  # One ingress rule per distinct container port. We deliberately do NOT
-  # collapse consecutive ports into ranges: grouping [80, 443] would open
-  # 80-442 (filling the gap), which is broader than what the service actually
-  # listens on. Per-port rules are precise and the rule count stays well under
-  # the AWS 200-ingress-rules-per-SG limit for typical services (1-5 ports).
-  service_port_ranges = [for p in local.service_container_ports : { from = p, to = p }]
-
-  # Only open ports when we know which SG to put the rules on.
+  service_port_ranges  = [for p in local.service_container_ports : { from = p, to = p }]
   auto_ingress_enabled = var.cluster_security_group_id != null && length(local.service_port_ranges) > 0
 }
 
@@ -236,13 +221,6 @@ resource "aws_ecs_service" "this" {
   }
 }
 
-# One ingress rule per port range, on the cluster SG, sourced from the
-# cluster SG itself. Consecutive container ports are collapsed into a single
-# range (e.g. 8080+8081+8082 -> one rule 8080-8082) to keep the rule count
-# low. See local.service_port_ranges for the grouping logic and
-# local.auto_ingress_enabled for the rationale (prevents forgotten-port
-# outages; keeps external access gated by traefik/ALB rather than opening
-# 0.0.0.0/0).
 resource "aws_security_group_rule" "service_ingress" {
   for_each = local.auto_ingress_enabled ? { for i, r in local.service_port_ranges : i => r } : {}
 
