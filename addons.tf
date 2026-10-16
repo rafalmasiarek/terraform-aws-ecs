@@ -8,10 +8,14 @@ locals {
 
   # Deployment model: EC2 launch type or EC2 capacity providers -> DAEMON
   # bridge service; Fargate (or explicit REPLICA) -> replicated awsvpc.
+  # Default launch_type is "EC2" when the cluster has EC2 capacity providers,
+  # otherwise "FARGATE".
+  addons_traefik_has_ec2_capacity = length(var.node_groups) > 0
+  addons_traefik_default_launch   = local.addons_traefik_has_ec2_capacity ? "EC2" : "FARGATE"
   addons_traefik_daemon = local.addons_traefik != null && (
     try(local.addons_traefik.scheduling_strategy, "DAEMON") == "DAEMON"
     && (
-      try(local.addons_traefik.launch_type, "FARGATE") == "EC2"
+      try(local.addons_traefik.launch_type, local.addons_traefik_default_launch) == "EC2"
       || length(coalesce(try(local.addons_traefik.capacity_provider_strategy, null), [])) > 0
     )
   )

@@ -1,3 +1,18 @@
+# Auto-detect the default launch type and compatibility from the cluster's
+# capacity. If the cluster has EC2 node groups, default to EC2; otherwise
+# Fargate. Users can override per-service via launch_type / capacity_provider_strategy
+# / requires_compatibilities.
+locals {
+  # True when the cluster has at least one EC2-backed capacity provider.
+  services_has_ec2_capacity = length(var.node_groups) > 0
+
+  # Default launch type: EC2 if there are node groups, Fargate otherwise.
+  services_default_launch_type = local.services_has_ec2_capacity ? "EC2" : "FARGATE"
+
+  # Default requires_compatibilities: must match the launch type.
+  services_default_requires_compatibilities = local.services_has_ec2_capacity ? ["EC2"] : ["FARGATE"]
+}
+
 module "service" {
   source = "./modules/service"
 
@@ -12,7 +27,7 @@ module "service" {
   task_cpu                   = try(each.value.task_cpu, null)
   task_memory                = try(each.value.task_memory, null)
   network_mode               = try(each.value.network_mode, "awsvpc")
-  requires_compatibilities   = try(each.value.requires_compatibilities, ["FARGATE"])
+  requires_compatibilities   = try(each.value.requires_compatibilities, local.services_default_requires_compatibilities)
   task_role_arn              = try(each.value.task_role_arn, null)
   execution_role_arn         = try(each.value.execution_role_arn, null)
   default_execution_role_arn = var.create_task_execution_role ? aws_iam_role.task_execution[0].arn : null
@@ -20,7 +35,7 @@ module "service" {
   infrastructure_role_arn    = coalesce(var.infrastructure_role_arn, var.create_infrastructure_role ? aws_iam_role.infrastructure[0].arn : null)
 
   desired_count              = try(each.value.desired_count, 1)
-  launch_type                = try(each.value.launch_type, "FARGATE")
+  launch_type                = try(each.value.launch_type, local.services_default_launch_type)
   capacity_provider_strategy = try(each.value.capacity_provider_strategy, [])
 
   deployment_maximum_percent         = try(each.value.deployment_maximum_percent, 200)
