@@ -167,7 +167,13 @@ locals {
       "--api.insecure=false",
       "--log.level=INFO",
     ],
-    local.traefik_ep_443 ? ["--entrypoints.websecure.address=:443"] : [],
+    local.traefik_ep_443 ? [
+      "--entrypoints.websecure.address=:443",
+      # Redirect all HTTP (port 80) to HTTPS (port 443).
+      "--entrypoints.web.http.redirections.entryPoint.to=websecure",
+      "--entrypoints.web.http.redirections.entryPoint.scheme=https",
+      "--entrypoints.web.http.redirections.entryPoint.permanent=true",
+    ] : [],
     local.traefik_acme ? [
       "--entrypoints.websecure.http.tls=true",
       "--entrypoints.websecure.http.tls.certificatesResolvers=le",
