@@ -43,10 +43,12 @@ module "addons" {
   vpc_id                     = var.vpc_id
   cluster_security_group_id  = aws_security_group.this.id
   default_execution_role_arn = var.create_task_execution_role ? aws_iam_role.task_execution[0].arn : null
+  infrastructure_role_arn    = var.infrastructure_role_arn != null ? var.infrastructure_role_arn : (var.create_infrastructure_role ? aws_iam_role.infrastructure[0].arn : null)
 
   cluster_addons = var.cluster_addons
 
   plan_facts = {
+    has_ec2_capacity       = local.addons_traefik_has_ec2_capacity
     traefik_daemon         = local.addons_traefik_daemon
     traefik_create_lb      = local.addons_traefik_create_lb
     traefik_nlb            = local.addons_traefik_nlb

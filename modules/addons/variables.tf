@@ -26,6 +26,12 @@ variable "default_execution_role_arn" {
   default     = null
 }
 
+variable "infrastructure_role_arn" {
+  description = "ARN of the ECS infrastructure role for EBS task volume management. Required when any addon uses configure_at_launch volumes."
+  type        = string
+  default     = null
+}
+
 variable "cluster_addons" {
   description = "ECS cluster infrastructure add-ons: traefik, opentelemetry, cloudwatch_agent, fluent_bit, node_exporter, cadvisor, falco, blackbox_exporter. See docs/addons.md for per-preset semantics."
   type        = any

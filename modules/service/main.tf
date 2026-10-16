@@ -139,6 +139,7 @@ resource "aws_ecs_service" "this" {
         content {
           role_arn   = coalesce(try(managed_ebs_volume.value.role_arn, null), var.infrastructure_role_arn)
           size_in_gb = try(managed_ebs_volume.value.size_in_gib, 20)
+          encrypted  = try(managed_ebs_volume.value.encrypted, true)
         }
       }
     }
