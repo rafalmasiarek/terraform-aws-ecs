@@ -130,9 +130,15 @@ resource "aws_ecs_service" "this" {
       dynamic "managed_ebs_volume" {
         for_each = try([volume_configuration.value.ebs_volume_configuration], [])
         content {
-          role_arn   = coalesce(try(managed_ebs_volume.value.role_arn, null), var.infrastructure_role_arn)
-          size_in_gb = try(managed_ebs_volume.value.size_in_gib, 20)
-          encrypted  = try(managed_ebs_volume.value.encrypted, true)
+          role_arn           = coalesce(try(managed_ebs_volume.value.role_arn, null), var.infrastructure_role_arn)
+          size_in_gb         = try(managed_ebs_volume.value.size_in_gib, null)
+          snapshot_id        = try(managed_ebs_volume.value.snapshot_id, null)
+          encrypted          = try(managed_ebs_volume.value.encrypted, true)
+          kms_key_id         = try(managed_ebs_volume.value.kms_key_id, null)
+          iops               = try(managed_ebs_volume.value.iops, null)
+          throughput         = try(managed_ebs_volume.value.throughput, null)
+          file_system_type   = try(managed_ebs_volume.value.file_system_type, null)
+          volume_type        = try(managed_ebs_volume.value.volume_type, null)
         }
       }
     }
