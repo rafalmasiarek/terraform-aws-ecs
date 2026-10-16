@@ -1,9 +1,25 @@
 locals {
+  # ECS platform context for the standardized tag set: the cluster the
+  # service runs in and its task family (the task definition's family).
+  container_service_profile = {
+    container = {
+      cluster     = var.cluster_name
+      task_family = var.name
+    }
+  }
+
   taggable = {
     this = {
       name       = var.name
-      service    = {}
-      attributes = []
+      service    = local.container_service_profile
+      attributes = ["service"]
+      created_at = null
+      extra_tags = {}
+    }
+    task = {
+      name       = "${var.name}-task"
+      service    = local.container_service_profile
+      attributes = ["service", "task"]
       created_at = null
       extra_tags = {}
     }
@@ -24,7 +40,7 @@ resource "aws_ecs_task_definition" "this" {
   requires_compatibilities = var.requires_compatibilities
   task_role_arn            = var.task_role_arn
   execution_role_arn       = local.execution_role_arn
-  container_definitions = jsonencode(var.container_definitions)
+  container_definitions    = jsonencode(var.container_definitions)
 
   dynamic "volume" {
     for_each = var.volumes
@@ -47,7 +63,7 @@ resource "aws_ecs_task_definition" "this" {
     }
   }
 
-  tags = local.tagger_tags["this"]
+  tags = local.tagger_tags["task"]
 }
 
 resource "aws_ecs_service" "this" {
@@ -130,15 +146,15 @@ resource "aws_ecs_service" "this" {
       dynamic "managed_ebs_volume" {
         for_each = try([volume_configuration.value.ebs_volume_configuration], [])
         content {
-          role_arn           = coalesce(try(managed_ebs_volume.value.role_arn, null), var.infrastructure_role_arn)
-          size_in_gb         = try(managed_ebs_volume.value.size_in_gib, null)
-          snapshot_id        = try(managed_ebs_volume.value.snapshot_id, null)
-          encrypted          = try(managed_ebs_volume.value.encrypted, true)
-          kms_key_id         = try(managed_ebs_volume.value.kms_key_id, null)
-          iops               = try(managed_ebs_volume.value.iops, null)
-          throughput         = try(managed_ebs_volume.value.throughput, null)
-          file_system_type   = try(managed_ebs_volume.value.file_system_type, null)
-          volume_type        = try(managed_ebs_volume.value.volume_type, null)
+          role_arn         = coalesce(try(managed_ebs_volume.value.role_arn, null), var.infrastructure_role_arn)
+          size_in_gb       = try(managed_ebs_volume.value.size_in_gib, null)
+          snapshot_id      = try(managed_ebs_volume.value.snapshot_id, null)
+          encrypted        = try(managed_ebs_volume.value.encrypted, true)
+          kms_key_id       = try(managed_ebs_volume.value.kms_key_id, null)
+          iops             = try(managed_ebs_volume.value.iops, null)
+          throughput       = try(managed_ebs_volume.value.throughput, null)
+          file_system_type = try(managed_ebs_volume.value.file_system_type, null)
+          volume_type      = try(managed_ebs_volume.value.volume_type, null)
         }
       }
     }

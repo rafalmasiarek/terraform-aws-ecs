@@ -1,19 +1,23 @@
 # Observability addon: cluster-level CloudWatch dashboards and alarms.
 # Creates management resources that observe the other addons and root services.
 # This is NOT a service — no task definition, no ECS service.
+#
+# NOTE: obs_* locals live in main.tf (not here). They must stay out of this
+# file's dependency graph: local.taggable references them, and if they were
+# defined alongside the resources they gate (which consume local.tagger_tags
+# from module.tagger), Terraform would see a cycle through the SNS topic ARN.
 
 locals {
-  obs_cfg     = try(var.cluster_addons.observability, {})
-  obs_enabled = local.addon_enabled.observability
-
-  # Discover which metric-exporting addons are active.
+  obs_cfg         = try(var.cluster_addons.observability, {})
+  obs_enabled     = local.addon_enabled.observability
   obs_has_traefik = local.addon_enabled.traefik
 
   # SNS topic resolution:
   # 1. User provides existing sns_topic_arn -> use it
   # 2. create_sns_topic = true -> module creates one
   # 3. Neither -> no alarm_actions (alarms exist but notify nowhere)
-  obs_create_sns   = try(local.obs_cfg.create_sns_topic, false)
+  # obs_create_sns and obs_custom_sns_topics live in main.tf (shared with
+  # local.taggable); only the ARN-dependent locals are defined here.
   obs_sns_topic_arn = coalesce(
     try(local.obs_cfg.sns_topic_arn, null),
     local.obs_create_sns ? aws_sns_topic.this[0].arn : null,
@@ -22,8 +26,7 @@ locals {
   # Alarm actions: list of SNS topic ARNs to notify on ALARM state.
   obs_alarm_actions = local.obs_sns_topic_arn != null ? [local.obs_sns_topic_arn] : []
 
-  # Custom additional SNS topics (user-managed, for fan-out to Slack/PagerDuty/etc.)
-  obs_custom_sns_topics = coalesce(try(local.obs_cfg.custom_sns_topics, null), [])
+  # obs_custom_sns_topics lives in main.tf (shared with local.taggable).
   obs_all_alarm_actions = concat(local.obs_alarm_actions, local.obs_custom_sns_topics)
 }
 
@@ -39,7 +42,7 @@ resource "aws_sns_topic" "this" {
   # No resource policy: access is controlled via IAM (CloudWatch, EventBridge).
   # The topic is NOT publicly accessible.
 
-  tags = merge(var.tags, coalesce(try(local.obs_cfg.tags, null), {}))
+  tags = local.tagger_tags["obs-sns"]
 }
 
 # ---------------------------------------------------------------------------
@@ -55,8 +58,8 @@ resource "aws_cloudwatch_dashboard" "this" {
     widgets = concat(
       [
         {
-          type   = "metric",
-          x      = 0, y = 0, width = 12, height = 6
+          type = "metric",
+          x    = 0, y = 0, width = 12, height = 6
           properties = {
             metrics = [
               ["AWS/ECS", "ServiceTasksRunning", "ClusterName", var.cluster_name, "Statistic", "Sum", "Period", "300"],
@@ -69,8 +72,8 @@ resource "aws_cloudwatch_dashboard" "this" {
           }
         },
         {
-          type   = "metric",
-          x      = 12, y = 0, width = 12, height = 6
+          type = "metric",
+          x    = 12, y = 0, width = 12, height = 6
           properties = {
             metrics = [
               ["AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${var.cluster_name}-*", "Statistic", "Average", "Period", "300"],
@@ -83,8 +86,8 @@ resource "aws_cloudwatch_dashboard" "this" {
           }
         },
         {
-          type   = "metric",
-          x      = 0, y = 6, width = 12, height = 6
+          type = "metric",
+          x    = 0, y = 6, width = 12, height = 6
           properties = {
             metrics = [
               ["AWS/EC2", "MemoryUtilization", "AutoScalingGroupName", "${var.cluster_name}-*", "Statistic", "Average", "Period", "300"],
@@ -99,8 +102,8 @@ resource "aws_cloudwatch_dashboard" "this" {
       ],
       local.obs_has_traefik ? [
         {
-          type   = "metric",
-          x      = 12, y = 6, width = 12, height = 6
+          type = "metric",
+          x    = 12, y = 6, width = 12, height = 6
           properties = {
             metrics = [
               ["AWS/ApplicationLoadBalancer", "RequestCount", "LoadBalancer", "app/${var.cluster_name}-addon-traefik*", "Statistic", "Sum", "Period", "300"],
@@ -140,6 +143,8 @@ resource "aws_cloudwatch_metric_alarm" "service_tasks_zero" {
 
   alarm_description = "Addon ${each.key} has fewer than 1 running task for 10 minutes."
   alarm_actions     = local.obs_all_alarm_actions
+
+  tags = local.tagger_tags["obs-alarm-${each.key}"]
 }
 
 # Alarm: Node CPU sustained above threshold.
@@ -161,6 +166,8 @@ resource "aws_cloudwatch_metric_alarm" "node_cpu_high" {
 
   alarm_description = "Any node sustained >${try(local.obs_cfg.cpu_alarm_threshold, 80)}% CPU for 15 minutes."
   alarm_actions     = local.obs_all_alarm_actions
+
+  tags = local.tagger_tags["obs-alarm-node-cpu"]
 }
 
 # Alarm: Node memory sustained above threshold.
@@ -182,6 +189,8 @@ resource "aws_cloudwatch_metric_alarm" "node_memory_high" {
 
   alarm_description = "Any node sustained >${try(local.obs_cfg.memory_alarm_threshold, 90)}% memory for 15 minutes."
   alarm_actions     = local.obs_all_alarm_actions
+
+  tags = local.tagger_tags["obs-alarm-node-mem"]
 }
 
 # ---------------------------------------------------------------------------
@@ -192,42 +201,46 @@ resource "aws_cloudwatch_metric_alarm" "node_memory_high" {
 resource "aws_cloudwatch_event_rule" "asg_scaling" {
   count = length(local.obs_all_alarm_actions) > 0 ? 1 : 0
 
-  name          = "${var.cluster_name}-addons-asg-scaling"
-  description   = "ASG scaling events for ${var.cluster_name} node groups"
+  name        = "${var.cluster_name}-addons-asg-scaling"
+  description = "ASG scaling events for ${var.cluster_name} node groups"
   event_pattern = jsonencode({
-    source = ["aws.autoscaling"]
+    source      = ["aws.autoscaling"]
     detail_type = ["EC2 Auto Scaling group scaling activity", "EC2 Auto Scaling group lifecycle action"]
     detail = {
       AutoScalingGroupName = ["${var.cluster_name}-*"]
     }
   })
+
+  tags = local.tagger_tags["obs-event-asg"]
 }
 
 resource "aws_cloudwatch_event_target" "asg_scaling_sns" {
   count = length(local.obs_all_alarm_actions) > 0 ? 1 : 0
 
-  rule      = aws_cloudwatch_event_rule.asg_scaling[0].name
-  arn      = local.obs_all_alarm_actions[0]
+  rule = aws_cloudwatch_event_rule.asg_scaling[0].name
+  arn  = local.obs_all_alarm_actions[0]
 }
 
 # ECS service deployment events (DEPLOYMENT_STARTED, DEPLOYMENT_SUCCEEDED, DEPLOYMENT_FAILED).
 resource "aws_cloudwatch_event_rule" "ecs_deployments" {
   count = length(local.obs_all_alarm_actions) > 0 ? 1 : 0
 
-  name          = "${var.cluster_name}-addons-ecs-deployments"
-  description   = "ECS deployment events for ${var.cluster_name}"
+  name        = "${var.cluster_name}-addons-ecs-deployments"
+  description = "ECS deployment events for ${var.cluster_name}"
   event_pattern = jsonencode({
-    source = ["aws.ecs"]
+    source      = ["aws.ecs"]
     detail_type = ["ECS Deployment"]
     detail = {
       clusterArn = [var.cluster_id]
     }
   })
+
+  tags = local.tagger_tags["obs-event-ecs"]
 }
 
 resource "aws_cloudwatch_event_target" "ecs_deployments_sns" {
   count = length(local.obs_all_alarm_actions) > 0 ? 1 : 0
 
-  rule      = aws_cloudwatch_event_rule.ecs_deployments[0].name
-  arn      = local.obs_all_alarm_actions[0]
+  rule = aws_cloudwatch_event_rule.ecs_deployments[0].name
+  arn  = local.obs_all_alarm_actions[0]
 }

@@ -4,9 +4,9 @@
 # via launch_type / capacity_provider_strategy / requires_compatibilities.
 locals {
   # Capacity detection.
-  services_has_ec2_capacity    = length(var.node_groups) > 0
+  services_has_ec2_capacity     = length(var.node_groups) > 0
   services_has_fargate_capacity = length(var.fargate_capacity_providers) > 0
-  services_is_mixed            = local.services_has_ec2_capacity && local.services_has_fargate_capacity
+  services_is_mixed             = local.services_has_ec2_capacity && local.services_has_fargate_capacity
 
   # Default launch type: FARGATE for mixed/pure-Fargate (serverless first),
   # EC2 for pure-EC2 clusters.
