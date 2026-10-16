@@ -51,5 +51,6 @@ output "addons" {
     cadvisor          = try(module.addons[0].cadvisor, null)
     falco             = try(module.addons[0].falco, null)
     blackbox_exporter = try(module.addons[0].blackbox_exporter, null)
+    observability     = try(module.addons[0].observability, null)
   }
 }

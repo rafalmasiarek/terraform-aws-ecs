@@ -10,5 +10,6 @@ terraform {
       source  = "registry.terraform.io/rafalmasiarek/tagger"
       version = ">= 0.1.0"
     }
+
   }
 }
