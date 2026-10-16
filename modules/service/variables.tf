@@ -30,6 +30,12 @@ variable "network_mode" {
   default = "awsvpc"
 }
 
+variable "cluster_security_group_id" {
+  description = "The cluster's task security group. When set, the module auto-discovers every container port from container_definitions and opens an ingress rule on this SG (source: the SG itself) so the service is reachable from other cluster tasks/load balancers without manual SG wiring."
+  type        = string
+  default     = null
+}
+
 variable "requires_compatibilities" {
   description = "Launch types the task definition is compatible with. Must match launch_type or capacity_provider_strategy. Defaults to [\"FARGATE\"] but should be set explicitly when using EC2."
   type        = list(string)

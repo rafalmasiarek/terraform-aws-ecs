@@ -60,6 +60,22 @@ locals {
   # launch_type and capacity_provider_strategy are mutually exclusive on
   # aws_ecs_service - a non-empty strategy always wins.
   use_capacity_provider_strategy = length(var.capacity_provider_strategy) > 0
+
+  # Auto-discovered container ports: every distinct containerPort across all
+  # containers in this task definition. These get an ingress rule on the
+  # cluster SG (source: the SG itself) so the service is reachable from other
+  # cluster tasks and load balancers without manual security-group wiring.
+  # This is what prevents the "service listens on port Y but nothing opened it
+  # in the SG" outage - the port opens automatically when the service is
+  # created. Source is the cluster SG, not 0.0.0.0/0, so external traffic
+  # still has to go through a controlled entry point (traefik / ALB).
+  service_container_ports = distinct(concat([
+    for c in var.container_definitions :
+    [for pm in try(c.portMappings, []) : pm.containerPort]
+  ]...))
+
+  # Only open ports when we know which SG to put the rules on.
+  auto_ingress_enabled = var.cluster_security_group_id != null && length(local.service_container_ports) > 0
 }
 
 resource "aws_ecs_task_definition" "this" {
@@ -211,4 +227,20 @@ resource "aws_ecs_service" "this" {
   lifecycle {
     ignore_changes = [desired_count]
   }
+}
+
+# One ingress rule per auto-discovered container port, on the cluster SG,
+# sourced from the cluster SG itself. See local.auto_ingress_enabled for the
+# rationale (prevents forgotten-port outages; keeps external access gated by
+# traefik/ALB rather than opening 0.0.0.0/0).
+resource "aws_security_group_rule" "service_ingress" {
+  for_each = local.auto_ingress_enabled ? { for p in local.service_container_ports : p => p } : {}
+
+  type                     = "ingress"
+  from_port                = each.value
+  to_port                  = each.value
+  protocol                 = "tcp"
+  description              = "${var.name}: container port ${each.value}"
+  source_security_group_id = var.cluster_security_group_id
+  security_group_id        = var.cluster_security_group_id
 }
