@@ -7,9 +7,9 @@ locals {
   # - Pure-Fargate: everything defaults to FARGATE.
   # - EC2-only addons (node_exporter, cadvisor, falco) are ALWAYS EC2
   #   regardless of cluster type (they need host mounts).
-  addon_has_ec2      = try(var.plan_facts.has_ec2_capacity, false)
-  addon_has_fargate  = try(var.plan_facts.has_fargate_capacity, false)
-  addon_is_mixed     = try(var.plan_facts.is_mixed, false)
+  addon_has_ec2     = try(var.plan_facts.has_ec2_capacity, false)
+  addon_has_fargate = try(var.plan_facts.has_fargate_capacity, false)
+  addon_is_mixed    = try(var.plan_facts.is_mixed, false)
 
   # Default for awsvpc addons (otel, cwa, fluent_bit, blackbox):
   # mixed -> both, pure-EC2 -> EC2, pure-Fargate -> FARGATE.
@@ -44,28 +44,128 @@ locals {
     local.addon_enabled.blackbox_exporter,
   ])
 
+  # Every addon resource that carries tags gets a taggable entry so the
+  # standardized tag set (origin, cost center, service category) is applied
+  # uniformly. Service-category data uses terraform-null-tagger's `container`
+  # profile ({ cluster, task_family }) - ECS/EKS platform context; the service
+  # name itself lives in the `name` input.
   taggable = merge(
     { for k in keys(local.addon_services) : "svc-${k}" => {
       name       = "${var.cluster_name}-addon-${k}"
-      service    = {}
-      attributes = []
+      service    = { container = { cluster = var.cluster_name } }
+      attributes = ["addon", k]
       created_at = null
       extra_tags = {}
     } },
     { for k in keys(local.addon_services) : "${k}-task" => {
       name       = "${var.cluster_name}-addon-${k}-task"
-      service    = {}
-      attributes = []
+      service    = { container = { cluster = var.cluster_name, task_family = "${var.cluster_name}-addon-${k}" } }
+      attributes = ["addon", k, "task"]
       created_at = null
       extra_tags = {}
     } },
     { for k in keys(local.addon_services) : "${k}-execution" => {
       name       = "${var.cluster_name}-addon-${k}-execution"
-      service    = {}
-      attributes = []
+      service    = { container = { cluster = var.cluster_name, task_family = "${var.cluster_name}-addon-${k}" } }
+      attributes = ["addon", k, "execution"]
       created_at = null
       extra_tags = {}
     } },
+    # CloudWatch log groups (one per awsvpc addon with an awslogs driver).
+    { for k in keys(local.addon_services) : "loggroup-${k}" => {
+      name       = "/aws/ecs/${var.cluster_name}/addons/${k}"
+      service    = { container = { cluster = var.cluster_name } }
+      attributes = ["addon", k, "log-group"]
+      created_at = null
+      extra_tags = {}
+      } if contains([
+        "traefik", "opentelemetry", "cloudwatch_agent", "fluent_bit",
+        "node_exporter", "cadvisor", "falco", "blackbox_exporter",
+    ], k) },
+    # Traefik ingress stack (create mode only).
+    local.addon_enabled.traefik && local.traefik_create_lb ? {
+      traefik-lb = {
+        name       = "${var.cluster_name}-addon-traefik"
+        service    = { load_balancer = { type = local.traefik_nlb ? "network" : "application" } }
+        attributes = ["addon", "traefik", "lb"]
+        created_at = null
+        extra_tags = {}
+      }
+    } : {},
+    { for p in local.addon_enabled.traefik && local.traefik_create_lb ? local.traefik_tg_ports : [] : "traefik-tg-${p}" => {
+      name       = "${var.cluster_name}-addon-traefik-${p}"
+      service    = { load_balancer = { type = local.traefik_nlb ? "network" : "application" } }
+      attributes = ["addon", "traefik", "tg", tostring(p)]
+      created_at = null
+      extra_tags = {}
+    } },
+    local.addon_enabled.traefik && local.traefik_routes_count > 0 ? {
+      traefik-routes = {
+        name       = "/ecs/${var.cluster_name}/addon-traefik-routes"
+        service    = { container = { cluster = var.cluster_name } }
+        attributes = ["addon", "traefik", "routes"]
+        created_at = null
+        extra_tags = {}
+      }
+    } : {},
+    # Observability addon resources.
+    local.addon_enabled.observability && try(try(var.cluster_addons.observability, {}).cloudwatch_dashboard, true) ? {
+      obs-dashboard = {
+        name       = "${var.cluster_name}-addons"
+        service    = { container = { cluster = var.cluster_name } }
+        attributes = ["observability", "dashboard"]
+        created_at = null
+        extra_tags = {}
+      }
+    } : {},
+    local.addon_enabled.observability && local.obs_create_sns ? {
+      obs-sns = {
+        name       = coalesce(try(try(var.cluster_addons.observability, {}).sns_topic_name, null), "${var.cluster_name}-addons-alerts")
+        service    = { container = { cluster = var.cluster_name } }
+        attributes = ["observability", "sns"]
+        created_at = null
+        extra_tags = {}
+      }
+    } : {},
+    { for k in keys(local.addon_services) : "obs-alarm-${k}" => {
+      name       = "${var.cluster_name}-addon-${k}-tasks-zero"
+      service    = { container = { cluster = var.cluster_name } }
+      attributes = ["observability", "alarm"]
+      created_at = null
+      extra_tags = {}
+    } if local.addon_enabled.observability && try(try(var.cluster_addons.observability, {}).alarms, true) },
+    local.addon_enabled.observability && try(try(var.cluster_addons.observability, {}).alarms, true) ? {
+      obs-alarm-node-cpu = {
+        name       = "${var.cluster_name}-node-cpu-high"
+        service    = { container = { cluster = var.cluster_name } }
+        attributes = ["observability", "alarm"]
+        created_at = null
+        extra_tags = {}
+      }
+      obs-alarm-node-mem = {
+        name       = "${var.cluster_name}-node-memory-high"
+        service    = { container = { cluster = var.cluster_name } }
+        attributes = ["observability", "alarm"]
+        created_at = null
+        extra_tags = {}
+      }
+    } : {},
+    local.obs_has_alarm_targets ? {
+      obs-event-asg = {
+        name       = "${var.cluster_name}-addons-asg-scaling"
+        service    = { container = { cluster = var.cluster_name } }
+        attributes = ["observability", "events"]
+        created_at = null
+        extra_tags = {}
+      }
+      obs-event-ecs = {
+        name       = "${var.cluster_name}-addons-ecs-deployments"
+        service    = { container = { cluster = var.cluster_name } }
+        attributes = ["observability", "events"]
+        created_at = null
+        extra_tags = {}
+      }
+    } : {},
   )
 
   awslogs_options = { for k in local.addon_all_keys : k => {
@@ -74,6 +174,28 @@ locals {
     "awslogs-stream-prefix" = "ecs/${var.cluster_name}/addons/${k}"
     "awslogs-create-group"  = "true"
   } }
+
+  # ---------------------------------------------------------------------
+  # Observability (SNS topic resolution)
+  # ---------------------------------------------------------------------
+  # These locals are referenced by local.taggable below and must NOT depend
+  # on any resource that consumes local.tagger_tags - that would close a
+  # cycle through module.tagger. The SNS topic ARN is only read here to
+  # decide whether the event rules exist; the alarms themselves reference
+  # obs_all_alarm_actions directly (resource -> local edges are fine).
+
+  obs_create_sns        = try(try(var.cluster_addons.observability, {}).create_sns_topic, false)
+  obs_custom_sns_topics = coalesce(try(try(var.cluster_addons.observability, {}).custom_sns_topics, null), [])
+
+  # Whether any alarm target exists, WITHOUT reading the created topic's ARN.
+  # This pure-config value is safe to reference from local.taggable; the
+  # resource-level obs_all_alarm_actions (which does read the ARN) stays in
+  # observability.tf so it never enters the tagger dependency graph.
+  obs_has_alarm_targets = local.addon_enabled.observability && (
+    try(try(var.cluster_addons.observability, {}).sns_topic_arn, null) != null
+    || local.obs_create_sns
+    || length(local.obs_custom_sns_topics) > 0
+  )
 
   # ---------------------------------------------------------------------
   # Traefik

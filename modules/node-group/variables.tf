@@ -90,17 +90,6 @@ variable "autoscaling_policies_enabled" {
   default = false
 }
 
-variable "use_tagger" {
-  type    = bool
-  default = true
-}
-
-variable "tagger_context" {
-  type    = any
-  default = null
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
-}
+# Tagger variables (use_tagger, tagger_context, tags,
+# tagger_additional_services) are declared in tagger.tf - the verbatim copy
+# from terraform-null-tagger. Do not redeclare them here.

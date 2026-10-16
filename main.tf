@@ -1,9 +1,18 @@
 locals {
+  # ECS platform context for the standardized tag set: every cluster-level
+  # resource is tagged with the container profile ({ cluster }) so cost and
+  # ownership tooling can group by cluster.
+  cluster_service_profile = {
+    container = {
+      cluster = var.name
+    }
+  }
+
   taggable = {
     this = {
       name       = var.name
-      service    = {}
-      attributes = []
+      service    = local.cluster_service_profile
+      attributes = ["cluster"]
       created_at = null
       extra_tags = {}
     }

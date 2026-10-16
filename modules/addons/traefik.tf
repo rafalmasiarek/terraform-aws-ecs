@@ -48,7 +48,7 @@ resource "aws_lb" "traefik" {
     coalesce(try(local.traefik_ingress_cfg.security_groups, null), []),
   )
 
-  tags = merge(var.tags, coalesce(try(local.traefik_cfg.tags, null), {}))
+  tags = local.tagger_tags["traefik-lb"]
 }
 
 # One target group per distinct container port.
@@ -75,7 +75,7 @@ resource "aws_lb_target_group" "traefik" {
     }
   }
 
-  tags = merge(var.tags, coalesce(try(local.traefik_cfg.tags, null), {}))
+  tags = local.tagger_tags["traefik-tg-${each.value}"]
 }
 
 # One listener per entry in the listeners map.
@@ -84,7 +84,7 @@ resource "aws_lb_listener" "traefik" {
 
   load_balancer_arn = aws_lb.traefik[0].arn
   port              = each.value.port
-  protocol          = coalesce(
+  protocol = coalesce(
     try(each.value.protocol, null),
     local.traefik_nlb ? "TCP" : (each.value.port == 443 ? "TLS" : "HTTP"),
   )

@@ -9,9 +9,9 @@ locals {
   # Deployment model: EC2 launch type or EC2 capacity providers -> DAEMON
   # bridge service; Fargate (or explicit REPLICA) -> replicated awsvpc.
   # Capacity detection for auto-detection of defaults.
-  addons_has_ec2_capacity    = length(var.node_groups) > 0
+  addons_has_ec2_capacity     = length(var.node_groups) > 0
   addons_has_fargate_capacity = length(var.fargate_capacity_providers) > 0
-  addons_is_mixed            = local.addons_has_ec2_capacity && local.addons_has_fargate_capacity
+  addons_is_mixed             = local.addons_has_ec2_capacity && local.addons_has_fargate_capacity
 
   # Traefik default launch: EC2 for pure-EC2 (daemon), FARGATE otherwise.
   addons_traefik_default_launch = local.addons_has_ec2_capacity && !local.addons_has_fargate_capacity ? "EC2" : "FARGATE"
@@ -51,16 +51,16 @@ module "addons" {
   cluster_addons = var.cluster_addons
 
   plan_facts = {
-    has_ec2_capacity        = local.addons_has_ec2_capacity
-    has_fargate_capacity    = local.addons_has_fargate_capacity
-    is_mixed                = local.addons_is_mixed
-    traefik_daemon          = local.addons_traefik_daemon
-    traefik_create_lb       = local.addons_traefik_create_lb
-    traefik_nlb             = local.addons_traefik_nlb
-    traefik_internal        = local.addons_traefik_internal
-    traefik_entrypoint_443  = local.addons_traefik_entrypoint_443
-    traefik_routes_count    = local.addons_traefik_routes_count
-    traefik_acme            = local.addons_traefik_acme
+    has_ec2_capacity       = local.addons_has_ec2_capacity
+    has_fargate_capacity   = local.addons_has_fargate_capacity
+    is_mixed               = local.addons_is_mixed
+    traefik_daemon         = local.addons_traefik_daemon
+    traefik_create_lb      = local.addons_traefik_create_lb
+    traefik_nlb            = local.addons_traefik_nlb
+    traefik_internal       = local.addons_traefik_internal
+    traefik_entrypoint_443 = local.addons_traefik_entrypoint_443
+    traefik_routes_count   = local.addons_traefik_routes_count
+    traefik_acme           = local.addons_traefik_acme
   }
 
   use_tagger     = var.use_tagger

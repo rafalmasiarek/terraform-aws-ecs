@@ -10,5 +10,5 @@ resource "aws_ssm_parameter" "traefik_routes" {
   value = local.traefik_routes_yaml
   tier  = "Standard"
 
-  tags = merge(var.tags, coalesce(try(local.traefik_cfg.tags, null), {}))
+  tags = local.tagger_tags["traefik-routes"]
 }

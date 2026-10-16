@@ -14,6 +14,26 @@ data "aws_ec2_instance_type" "this" {
 }
 
 locals {
+  # ECS platform context for the standardized tag set: the node group's ASG
+  # and its instances are tagged with the container profile ({ cluster,
+  # node_group }) so cost tooling can attribute node spend to the cluster.
+  node_group_service_profile = {
+    container = {
+      cluster    = var.cluster_name
+      node_group = var.name
+    }
+  }
+
+  taggable = {
+    this = {
+      name       = var.name
+      service    = local.node_group_service_profile
+      attributes = ["node-group"]
+      created_at = null
+      extra_tags = {}
+    }
+  }
+
   resolved_ami_id = var.ami_id != null ? var.ami_id : (
     contains(try(data.aws_ec2_instance_type.this[0].supported_architectures, []), "arm64")
     ? data.aws_ssm_parameter.ami_arm64[0].value
@@ -81,5 +101,5 @@ module "nodes" {
 
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context
-  tags           = var.tags
+  tags           = local.tagger_tags["this"]
 }
