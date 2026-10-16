@@ -101,6 +101,12 @@ variable "wait_for_steady_state" {
   default = false
 }
 
+variable "scheduling_strategy" {
+  description = "\"DAEMON\" (one task per active container instance) or \"REPLICA\" (the default)."
+  type        = string
+  default     = "REPLICA"
+}
+
 variable "force_new_deployment" {
   type    = bool
   default = false

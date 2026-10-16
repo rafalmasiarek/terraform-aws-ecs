@@ -24,7 +24,14 @@ resource "aws_ecs_task_definition" "this" {
   requires_compatibilities = var.requires_compatibilities
   task_role_arn            = var.task_role_arn
   execution_role_arn       = local.execution_role_arn
-  container_definitions    = jsonencode(var.container_definitions)
+  # ECS expects `command` as a single space-joined string but `entryPoint`
+  # as a list; normalize both shapes coming from callers before encoding.
+  container_definitions = jsonencode([
+    for cd in var.container_definitions : merge(cd, {
+      command    = try(join(" ", cd.command), null)
+      entryPoint = try([for e in cd.entryPoint : e], null)
+    })
+  ])
 
   dynamic "volume" {
     for_each = var.volumes
@@ -53,7 +60,8 @@ resource "aws_ecs_service" "this" {
   task_definition = aws_ecs_task_definition.this.arn
   desired_count   = var.desired_count
 
-  launch_type = local.use_capacity_provider_strategy ? null : var.launch_type
+  launch_type         = local.use_capacity_provider_strategy ? null : var.launch_type
+  scheduling_strategy = var.scheduling_strategy
 
   dynamic "capacity_provider_strategy" {
     for_each = var.capacity_provider_strategy
