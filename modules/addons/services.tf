@@ -191,7 +191,7 @@ module "node_exporter_service" {
   task_memory = try(local.ne_cfg.task_memory, 128)
 
   network_mode             = "bridge"
-  requires_compatibilities = ["EC2"]
+  requires_compatibilities = local.addon_ec2_daemon_compat
 
   task_role_arn              = local.ne_task_role_arn
   execution_role_arn         = local.ne_execution_role_arn
@@ -229,7 +229,7 @@ module "cadvisor_service" {
   task_memory = try(local.cadvisor_cfg.task_memory, 128)
 
   network_mode             = "bridge"
-  requires_compatibilities = ["EC2"]
+  requires_compatibilities = local.addon_ec2_daemon_compat
 
   task_role_arn              = local.cadvisor_task_role_arn
   execution_role_arn         = local.cadvisor_execution_role_arn
@@ -267,7 +267,7 @@ module "falco_service" {
   task_memory = try(local.falco_cfg.task_memory, 512)
 
   network_mode             = "bridge"
-  requires_compatibilities = ["EC2"]
+  requires_compatibilities = local.addon_ec2_daemon_compat
 
   task_role_arn              = local.falco_task_role_arn
   execution_role_arn         = local.falco_execution_role_arn
