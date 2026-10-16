@@ -66,3 +66,13 @@ output "blackbox_exporter" {
     task_definition_arn = try(module.blackbox_exporter_service[0].task_definition_arn, null)
   } : null
 }
+
+output "observability" {
+  description = "Observability addon outputs (null when disabled)."
+  value = local.addon_enabled.observability ? {
+    dashboard_name   = try(aws_cloudwatch_dashboard.this[0].dashboard_name, null)
+    alarm_arns       = [for a in aws_cloudwatch_metric_alarm.service_tasks_zero : a.arn]
+    node_cpu_alarm   = try(aws_cloudwatch_metric_alarm.node_cpu_high[0].arn, null)
+    node_memory_alarm = try(aws_cloudwatch_metric_alarm.node_memory_high[0].arn, null)
+  } : null
+}

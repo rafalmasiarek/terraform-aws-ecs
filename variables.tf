@@ -89,8 +89,8 @@ variable "cluster_addons" {
     condition = var.cluster_addons == null ? true : alltrue([
       for k in keys(var.cluster_addons) : contains(
         ["traefik", "opentelemetry", "cloudwatch_agent", "fluent_bit",
-      "node_exporter", "cadvisor", "falco", "blackbox_exporter"], k)
+      "node_exporter", "cadvisor", "falco", "blackbox_exporter", "observability"], k)
     ])
-    error_message = "cluster_addons: unknown preset. Valid keys: traefik, opentelemetry, cloudwatch_agent, fluent_bit, node_exporter, cadvisor, falco, blackbox_exporter."
+    error_message = "cluster_addons: unknown preset. Valid keys: traefik, opentelemetry, cloudwatch_agent, fluent_bit, node_exporter, cadvisor, falco, blackbox_exporter, observability."
   }
 }

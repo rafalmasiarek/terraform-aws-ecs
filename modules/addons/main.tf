@@ -26,7 +26,7 @@ locals {
   # Every known preset key is always present (defaulting to false when the
   # block is absent) so attribute access never fails on a partial map.
   addon_all_keys = ["traefik", "opentelemetry", "cloudwatch_agent", "fluent_bit",
-  "node_exporter", "cadvisor", "falco", "blackbox_exporter"]
+  "node_exporter", "cadvisor", "falco", "blackbox_exporter", "observability"]
 
   addon_enabled = { for k in local.addon_all_keys : k => (
     var.cluster_addons != null && contains(keys(var.cluster_addons), k) ? try(var.cluster_addons[k].enabled, true) : false
