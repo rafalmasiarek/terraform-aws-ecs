@@ -121,7 +121,7 @@ resource "aws_security_group_rule" "traefik_ingress" {
   from_port                = each.value
   to_port                  = each.value
   protocol                 = "tcp"
-  description              = "traefik addon ingress (container port ${each.value})"
+  description              = "${var.cluster_name}-addon-traefik: container port ${each.value}"
   source_security_group_id = var.cluster_security_group_id
   security_group_id        = var.cluster_security_group_id
 }

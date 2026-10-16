@@ -228,7 +228,7 @@ resource "aws_security_group_rule" "service_ingress" {
   from_port                = each.value.from
   to_port                  = each.value.to
   protocol                 = "tcp"
-  description              = "${var.name}: container ports ${each.value.from}${each.value.from != each.value.to ? "-" + tostring(each.value.to) : ""}"
+  description              = "${var.name}: container port ${each.value.from}"
   source_security_group_id = var.cluster_security_group_id
   security_group_id        = var.cluster_security_group_id
 }
