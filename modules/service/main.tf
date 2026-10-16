@@ -24,14 +24,7 @@ resource "aws_ecs_task_definition" "this" {
   requires_compatibilities = var.requires_compatibilities
   task_role_arn            = var.task_role_arn
   execution_role_arn       = local.execution_role_arn
-  # ECS expects `command` as a single space-joined string but `entryPoint`
-  # as a list; normalize both shapes coming from callers before encoding.
-  container_definitions = jsonencode([
-    for cd in var.container_definitions : merge(cd, {
-      command    = try(join(" ", cd.command), null)
-      entryPoint = try([for e in cd.entryPoint : e], null)
-    })
-  ])
+  container_definitions = jsonencode(var.container_definitions)
 
   dynamic "volume" {
     for_each = var.volumes
