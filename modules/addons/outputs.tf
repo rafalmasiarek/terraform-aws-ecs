@@ -70,9 +70,12 @@ output "blackbox_exporter" {
 output "observability" {
   description = "Observability addon outputs (null when disabled)."
   value = local.addon_enabled.observability ? {
-    dashboard_name   = try(aws_cloudwatch_dashboard.this[0].dashboard_name, null)
-    alarm_arns       = [for a in aws_cloudwatch_metric_alarm.service_tasks_zero : a.arn]
-    node_cpu_alarm   = try(aws_cloudwatch_metric_alarm.node_cpu_high[0].arn, null)
+    dashboard_name    = try(aws_cloudwatch_dashboard.this[0].dashboard_name, null)
+    alarm_arns        = [for a in aws_cloudwatch_metric_alarm.service_tasks_zero : a.arn]
+    node_cpu_alarm    = try(aws_cloudwatch_metric_alarm.node_cpu_high[0].arn, null)
     node_memory_alarm = try(aws_cloudwatch_metric_alarm.node_memory_high[0].arn, null)
+    sns_topic_arn     = local.obs_sns_topic_arn
+    event_rule_asg    = try(aws_cloudwatch_event_rule.asg_scaling[0].arn, null)
+    event_rule_ecs    = try(aws_cloudwatch_event_rule.ecs_deployments[0].arn, null)
   } : null
 }
