@@ -29,7 +29,7 @@ locals {
   "node_exporter", "cadvisor", "falco", "blackbox_exporter"]
 
   addon_enabled = { for k in local.addon_all_keys : k => (
-    contains(keys(coalesce(var.cluster_addons, {})), k) ? try(var.cluster_addons[k].enabled, true) : false
+    var.cluster_addons != null && contains(keys(var.cluster_addons), k) ? try(var.cluster_addons[k].enabled, true) : false
   ) }
 
   addon_services = { for k, v in local.addon_enabled : k => v if v }
@@ -240,11 +240,11 @@ locals {
   traefik_task_cpu    = local.traefik_compat == ["EC2"] ? try(local.traefik_cfg.task_cpu, 512) : coalesce(try(local.traefik_cfg.task_cpu, null), 256)
   traefik_task_memory = local.traefik_compat == ["EC2"] ? try(local.traefik_cfg.task_memory, 256) : coalesce(try(local.traefik_cfg.task_memory, null), 512)
 
-  # Target group wiring: create mode uses the module-built TGs; existing
-  # mode uses the caller's ARNs (a separate 443 TG when both exist).
-  traefik_tg_arn_80 = local.traefik_create_lb ? try(aws_lb_target_group.traefik[0].arn, null) : try(local.traefik_cfg.ingress.target_group_arn, null)
+  # Target group wiring: create mode uses the module-built TGs (keyed by
+  # container port); existing mode uses the caller's ARNs.
+  traefik_tg_arn_80 = local.traefik_create_lb ? try(aws_lb_target_group.traefik[80].arn, null) : try(local.traefik_cfg.ingress.target_group_arn, null)
   traefik_tg_arn_443 = local.traefik_ep_443 ? (
-    local.traefik_create_lb ? try(aws_lb_target_group.traefik_443[0].arn, null) : try(local.traefik_cfg.ingress.target_group_arn_443, null)
+    local.traefik_create_lb ? try(aws_lb_target_group.traefik[443].arn, null) : try(local.traefik_cfg.ingress.target_group_arn_443, null)
   ) : null
 
   traefik_load_balancers = concat(
