@@ -1,10 +1,26 @@
 locals {
-  # Auto-detect the cluster's default launch type and compatibility from the
-  # plan facts passed by the root module. If the cluster has EC2 capacity,
-  # default to EC2; otherwise Fargate. This ensures addons work on both
-  # pure-EC2, pure-Fargate, and mixed clusters without explicit configuration.
-  addon_default_launch = try(var.plan_facts.has_ec2_capacity, false) ? "EC2" : "FARGATE"
-  addon_default_compat = try(var.plan_facts.has_ec2_capacity, false) ? ["EC2"] : ["FARGATE"]
+  # Auto-detect the cluster's capacity model from plan facts.
+  # Hybrid approach (mirrors terraform-aws-modules/eks philosophy):
+  # - Mixed clusters (EC2 + Fargate): awsvpc addons get ["EC2", "FARGATE"]
+  #   so the ECS scheduler places them optimally.
+  # - Pure-EC2: everything defaults to EC2.
+  # - Pure-Fargate: everything defaults to FARGATE.
+  # - EC2-only addons (node_exporter, cadvisor, falco) are ALWAYS EC2
+  #   regardless of cluster type (they need host mounts).
+  addon_has_ec2      = try(var.plan_facts.has_ec2_capacity, false)
+  addon_has_fargate  = try(var.plan_facts.has_fargate_capacity, false)
+  addon_is_mixed     = try(var.plan_facts.is_mixed, false)
+
+  # Default for awsvpc addons (otel, cwa, fluent_bit, blackbox):
+  # mixed -> both, pure-EC2 -> EC2, pure-Fargate -> FARGATE.
+  addon_default_launch = local.addon_has_ec2 && !local.addon_has_fargate ? "EC2" : "FARGATE"
+  addon_default_compat = concat(
+    local.addon_has_ec2 ? ["EC2"] : [],
+    local.addon_has_fargate ? ["FARGATE"] : [],
+  )
+
+  # EC2 daemon addons are always EC2 (host mounts requirement).
+  addon_ec2_daemon_compat = ["EC2"]
 
   # Per-preset enabled flags, defaulting to true when the block is present.
   # Every known preset key is always present (defaulting to false when the
