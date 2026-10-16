@@ -52,8 +52,15 @@ variable "default_execution_role_arn" {
 }
 
 variable "volumes" {
-  type    = any
-  default = []
+  description = "List of volume configurations. Each entry: { name, host_path?, configure_at_launch?, efs_volume_configuration?, ebs_volume_configuration? }. EBS volumes require infrastructure_role_arn (or the cluster's default) for ECS to manage the volume lifecycle."
+  type        = any
+  default     = []
+}
+
+variable "infrastructure_role_arn" {
+  description = "ARN of the ECS infrastructure role for EBS task volume management. Falls back to the cluster's default when null."
+  type        = string
+  default     = null
 }
 
 variable "desired_count" {

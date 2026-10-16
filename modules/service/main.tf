@@ -36,8 +36,9 @@ resource "aws_ecs_task_definition" "this" {
   dynamic "volume" {
     for_each = var.volumes
     content {
-      name      = volume.value.name
-      host_path = try(volume.value.host_path, null)
+      name                = volume.value.name
+      host_path           = try(volume.value.host_path, null)
+      configure_at_launch = try(volume.value.configure_at_launch, false)
 
       dynamic "efs_volume_configuration" {
         for_each = try([volume.value.efs_volume_configuration], [])
@@ -48,6 +49,8 @@ resource "aws_ecs_task_definition" "this" {
           transit_encryption_port = try(efs_volume_configuration.value.transit_encryption_port, null)
         }
       }
+
+
     }
   }
 
@@ -120,6 +123,24 @@ resource "aws_ecs_service" "this" {
     content {
       type  = ordered_placement_strategy.value.type
       field = ordered_placement_strategy.value.field
+    }
+  }
+
+  # EBS volume configuration - the infrastructure role ARN is required for ECS
+  # to manage the volume lifecycle (create, attach, detach, delete). Without
+  # this, orphaned volumes are left behind when tasks stop.
+  dynamic "volume_configuration" {
+    for_each = [for v in var.volumes : v if try(v.configure_at_launch, false)]
+    content {
+      name = volume_configuration.value.name
+
+      dynamic "managed_ebs_volume" {
+        for_each = try([volume_configuration.value.ebs_volume_configuration], [])
+        content {
+          role_arn   = coalesce(try(managed_ebs_volume.value.role_arn, null), var.infrastructure_role_arn)
+          size_in_gb = try(managed_ebs_volume.value.size_in_gib, 20)
+        }
+      }
     }
   }
 

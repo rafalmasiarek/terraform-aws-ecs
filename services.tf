@@ -17,6 +17,7 @@ module "service" {
   execution_role_arn         = try(each.value.execution_role_arn, null)
   default_execution_role_arn = var.create_task_execution_role ? aws_iam_role.task_execution[0].arn : null
   volumes                    = try(each.value.volumes, [])
+  infrastructure_role_arn    = coalesce(var.infrastructure_role_arn, var.create_infrastructure_role ? aws_iam_role.infrastructure[0].arn : null)
 
   desired_count              = try(each.value.desired_count, 1)
   launch_type                = try(each.value.launch_type, "FARGATE")
