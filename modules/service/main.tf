@@ -13,14 +13,16 @@ locals {
   # not created by ECS and carry no cost of their own.
   ebs_volumes = [for v in var.volumes : v if try(v.configure_at_launch, false) && try(v.ebs_volume_configuration, null) != null]
 
-  # block_storage profile per managed volume: stable-config fields only
-  # (size/type/iops/file_system_type all change only via an explicit apply),
-  # so they're safe to tag without drift risk.
+  # block_storage profile per managed volume. Only fields that CANNOT change
+  # outside Terraform are tagged - the same rule the tagger applies to RDS
+  # (storage_gb excluded: storage autoscaling) and ASG (desired_capacity
+  # excluded: autoscaler). EBS size and iops CAN be changed live via
+  # ModifyVolume (resize, gp3 performance tuning), so they're deliberately
+  # left out to avoid perpetual plan diffs / false positives. What remains is
+  # genuinely stable: the volume type family and the filesystem on top.
   ebs_block_storage_profiles = {
     for v in local.ebs_volumes : v.name => merge(
-      { size_gb = try(v.ebs_volume_configuration.size_in_gib, null) },
       { type = try(v.ebs_volume_configuration.volume_type, null) },
-      { iops = try(v.ebs_volume_configuration.iops, null) },
       { file_system_type = try(v.ebs_volume_configuration.file_system_type, null) },
     )
   }
