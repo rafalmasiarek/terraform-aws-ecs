@@ -62,20 +62,46 @@ locals {
   use_capacity_provider_strategy = length(var.capacity_provider_strategy) > 0
 
   # Auto-discovered container ports: every distinct containerPort across all
-  # containers in this task definition. These get an ingress rule on the
-  # cluster SG (source: the SG itself) so the service is reachable from other
-  # cluster tasks and load balancers without manual security-group wiring.
-  # This is what prevents the "service listens on port Y but nothing opened it
-  # in the SG" outage - the port opens automatically when the service is
-  # created. Source is the cluster SG, not 0.0.0.0/0, so external traffic
-  # still has to go through a controlled entry point (traefik / ALB).
-  service_container_ports = distinct(concat([
+  # containers in this task definition. These get ingress rules on the cluster
+  # SG (source: the SG itself) so the service is reachable from other cluster
+  # tasks and load balancers without manual security-group wiring. This is what
+  # prevents the "service listens on port Y but nothing opened it in the SG"
+  # outage - the port opens automatically when the service is created. Source
+  # is the cluster SG, not 0.0.0.0/0, so external traffic still has to go
+  # through a controlled entry point (traefik / ALB).
+  service_container_ports = distinct(sort(concat([
     for c in var.container_definitions :
     [for pm in try(c.portMappings, []) : pm.containerPort]
-  ]...))
+  ]...)))
+
+  # Collapse consecutive ports into ranges to keep the rule count low (AWS
+  # allows 200 ingress rules per SG). HCL's sort() is lexicographic for
+  # numbers, so we zero-pad to force numeric ordering. A port starts a new
+  # "run" when it is the first or not exactly one more than the previous; each
+  # run becomes one {from, to} range (a lone port has from == to).
+  #   e.g. [80, 443, 8080, 8081, 8082] ->
+  #        [{from=80,to=442}, {from=443,to=8079}, {from=8080,to=8082}]
+  service_ports_padded = [for p in local.service_container_ports : format("%05d", p)]
+  service_ports_sorted = [for sp in sort(local.service_ports_padded) : tonumber(sp)]
+  service_port_run_starts = distinct([
+    for i, p in local.service_ports_sorted : p
+    if i == 0 || p != local.service_ports_sorted[i - 1] + 1
+  ])
+  service_port_last = local.service_ports_sorted[length(local.service_ports_sorted) - 1]
+  # Next run start after each run (null for the final run). Run starts are
+  # already in numeric order, so the next one is simply the following element.
+  service_port_next_run = {
+    for idx, rs in local.service_port_run_starts : rs => idx + 1 < length(local.service_port_run_starts) ? local.service_port_run_starts[idx + 1] : null
+  }
+  service_port_ranges = [
+    for rs in local.service_port_run_starts : {
+      from = rs
+      to   = local.service_port_next_run[rs] == null ? local.service_port_last : local.service_port_next_run[rs] - 1
+    }
+  ]
 
   # Only open ports when we know which SG to put the rules on.
-  auto_ingress_enabled = var.cluster_security_group_id != null && length(local.service_container_ports) > 0
+  auto_ingress_enabled = var.cluster_security_group_id != null && length(local.service_port_ranges) > 0
 }
 
 resource "aws_ecs_task_definition" "this" {
@@ -229,18 +255,21 @@ resource "aws_ecs_service" "this" {
   }
 }
 
-# One ingress rule per auto-discovered container port, on the cluster SG,
-# sourced from the cluster SG itself. See local.auto_ingress_enabled for the
-# rationale (prevents forgotten-port outages; keeps external access gated by
-# traefik/ALB rather than opening 0.0.0.0/0).
+# One ingress rule per port range, on the cluster SG, sourced from the
+# cluster SG itself. Consecutive container ports are collapsed into a single
+# range (e.g. 8080+8081+8082 -> one rule 8080-8082) to keep the rule count
+# low. See local.service_port_ranges for the grouping logic and
+# local.auto_ingress_enabled for the rationale (prevents forgotten-port
+# outages; keeps external access gated by traefik/ALB rather than opening
+# 0.0.0.0/0).
 resource "aws_security_group_rule" "service_ingress" {
-  for_each = local.auto_ingress_enabled ? { for p in local.service_container_ports : p => p } : {}
+  for_each = local.auto_ingress_enabled ? { for i, r in local.service_port_ranges : i => r } : {}
 
   type                     = "ingress"
-  from_port                = each.value
-  to_port                  = each.value
+  from_port                = each.value.from
+  to_port                  = each.value.to
   protocol                 = "tcp"
-  description              = "${var.name}: container port ${each.value}"
+  description              = "${var.name}: container ports ${each.value.from}${each.value.from != each.value.to ? "-" + tostring(each.value.to) : ""}"
   source_security_group_id = var.cluster_security_group_id
   security_group_id        = var.cluster_security_group_id
 }
