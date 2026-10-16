@@ -31,8 +31,14 @@ variable "network_mode" {
 }
 
 variable "requires_compatibilities" {
-  type    = list(string)
-  default = ["FARGATE"]
+  description = "Launch types the task definition is compatible with. Must match launch_type or capacity_provider_strategy. Defaults to [\"FARGATE\"] but should be set explicitly when using EC2."
+  type        = list(string)
+  default     = ["FARGATE"]
+
+  validation {
+    condition = alltrue([for c in var.requires_compatibilities : contains(["EC2", "FARGATE", "EXTERNAL", "MANAGED_INSTANCES"], c)])
+    error_message = "requires_compatibilities may only contain \"EC2\", \"FARGATE\", \"EXTERNAL\", and/or \"MANAGED_INSTANCES\"."
+  }
 }
 
 variable "task_role_arn" {

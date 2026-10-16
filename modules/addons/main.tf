@@ -1,4 +1,11 @@
 locals {
+  # Auto-detect the cluster's default launch type and compatibility from the
+  # plan facts passed by the root module. If the cluster has EC2 capacity,
+  # default to EC2; otherwise Fargate. This ensures addons work on both
+  # pure-EC2, pure-Fargate, and mixed clusters without explicit configuration.
+  addon_default_launch = try(var.plan_facts.has_ec2_capacity, false) ? "EC2" : "FARGATE"
+  addon_default_compat = try(var.plan_facts.has_ec2_capacity, false) ? ["EC2"] : ["FARGATE"]
+
   # Per-preset enabled flags, defaulting to true when the block is present.
   # Every known preset key is always present (defaulting to false when the
   # block is absent) so attribute access never fails on a partial map.

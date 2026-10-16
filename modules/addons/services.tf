@@ -20,6 +20,7 @@ module "traefik_service" {
   task_role_arn              = local.traefik_task_role_arn
   execution_role_arn         = local.traefik_execution_role_arn
   default_execution_role_arn = var.default_execution_role_arn
+  infrastructure_role_arn    = var.infrastructure_role_arn
   volumes                    = local.traefik_volumes
 
   desired_count              = local.traefik_daemon ? null : try(local.traefik_cfg.desired_count, 2)
@@ -60,15 +61,16 @@ module "opentelemetry_service" {
   task_memory = try(local.otel_cfg.task_memory, 512)
 
   network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE"]
+  requires_compatibilities = local.addon_default_compat
 
   task_role_arn              = local.otel_task_role_arn
   execution_role_arn         = local.otel_execution_role_arn
   default_execution_role_arn = var.default_execution_role_arn
-  volumes                    = []
+  infrastructure_role_arn    = var.infrastructure_role_arn
+  volumes                    = coalesce(try(local.otel_cfg.volumes, null), [])
 
   desired_count              = try(local.otel_cfg.desired_count, 1)
-  launch_type                = try(local.otel_cfg.launch_type, "FARGATE")
+  launch_type                = try(local.otel_cfg.launch_type, local.addon_default_launch)
   capacity_provider_strategy = coalesce(try(local.otel_cfg.capacity_provider_strategy, null), [])
 
   deployment_maximum_percent         = 200
@@ -102,15 +104,16 @@ module "cloudwatch_agent_service" {
   task_memory = try(local.cwa_cfg.task_memory, 64)
 
   network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE"]
+  requires_compatibilities = local.addon_default_compat
 
   task_role_arn              = local.cwa_task_role_arn
   execution_role_arn         = local.cwa_execution_role_arn
   default_execution_role_arn = var.default_execution_role_arn
-  volumes                    = []
+  infrastructure_role_arn    = var.infrastructure_role_arn
+  volumes                    = coalesce(try(local.cwa_cfg.volumes, null), [])
 
   desired_count              = 1
-  launch_type                = "FARGATE"
+  launch_type                = local.addon_default_launch
   capacity_provider_strategy = []
 
   deployment_maximum_percent         = 200
@@ -144,15 +147,16 @@ module "fluent_bit_service" {
   task_memory = try(local.fb_cfg.task_memory, 256)
 
   network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE"]
+  requires_compatibilities = local.addon_default_compat
 
   task_role_arn              = local.fb_task_role_arn
   execution_role_arn         = local.fb_execution_role_arn
   default_execution_role_arn = var.default_execution_role_arn
-  volumes                    = []
+  infrastructure_role_arn    = var.infrastructure_role_arn
+  volumes                    = coalesce(try(local.fb_cfg.volumes, null), [])
 
   desired_count              = 1
-  launch_type                = "FARGATE"
+  launch_type                = local.addon_default_launch
   capacity_provider_strategy = []
 
   deployment_maximum_percent         = 200
@@ -192,6 +196,7 @@ module "node_exporter_service" {
   task_role_arn              = local.ne_task_role_arn
   execution_role_arn         = local.ne_execution_role_arn
   default_execution_role_arn = var.default_execution_role_arn
+  infrastructure_role_arn    = var.infrastructure_role_arn
   volumes                    = local.host_mount_volumes
 
   desired_count              = null
@@ -229,6 +234,7 @@ module "cadvisor_service" {
   task_role_arn              = local.cadvisor_task_role_arn
   execution_role_arn         = local.cadvisor_execution_role_arn
   default_execution_role_arn = var.default_execution_role_arn
+  infrastructure_role_arn    = var.infrastructure_role_arn
   volumes                    = local.host_mount_volumes
 
   desired_count              = null
@@ -266,6 +272,7 @@ module "falco_service" {
   task_role_arn              = local.falco_task_role_arn
   execution_role_arn         = local.falco_execution_role_arn
   default_execution_role_arn = var.default_execution_role_arn
+  infrastructure_role_arn    = var.infrastructure_role_arn
   volumes                    = local.host_mount_volumes
 
   desired_count              = null
@@ -298,15 +305,16 @@ module "blackbox_exporter_service" {
   task_memory = try(local.bb_cfg.task_memory, 256)
 
   network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE"]
+  requires_compatibilities = local.addon_default_compat
 
   task_role_arn              = local.bb_task_role_arn
   execution_role_arn         = local.bb_execution_role_arn
   default_execution_role_arn = var.default_execution_role_arn
-  volumes                    = []
+  infrastructure_role_arn    = var.infrastructure_role_arn
+  volumes                    = coalesce(try(local.bb_cfg.volumes, null), [])
 
   desired_count              = 1
-  launch_type                = "FARGATE"
+  launch_type                = local.addon_default_launch
   capacity_provider_strategy = []
 
   deployment_maximum_percent         = 200
