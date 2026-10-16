@@ -43,4 +43,5 @@ module "node_group" {
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context
   tags           = var.tags
+  origin_module  = "node-group"
 }

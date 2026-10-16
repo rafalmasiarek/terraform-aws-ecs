@@ -54,6 +54,12 @@ variable "tagger_additional_services" {
   default     = {}
 }
 
+variable "origin_module" {
+  description = "Sub-module identifier stamped into the tagger:origin:module tag so resources created by different sub-modules of one origin repo can be told apart. Set per sub-module (e.g. \"cluster\" at root, \"service\", \"addons\", \"node-group\")."
+  type        = string
+  default     = null
+}
+
 data "tagger_origin" "self" {
   count       = var.use_tagger ? 1 : 0
   module_path = path.module
@@ -68,6 +74,9 @@ module "tagger" {
 
   origin_source  = data.tagger_origin.self[0].source
   origin_version = data.tagger_origin.self[0].version
+  # Root always identifies as "cluster"; sub-modules override via their own
+  # tagger.tf copy + the origin_module arg passed at the module call site.
+  origin_module = coalesce(var.origin_module, "cluster")
 
   service    = merge(try(each.value.service, {}), try(var.tagger_additional_services[each.key], {}))
   attributes = try(each.value.attributes, null)

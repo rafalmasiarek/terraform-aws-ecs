@@ -8,22 +8,50 @@ locals {
     }
   }
 
-  taggable = {
-    this = {
-      name       = var.name
-      service    = local.container_service_profile
-      attributes = ["service"]
-      created_at = null
-      extra_tags = {}
-    }
-    task = {
-      name       = "${var.name}-task"
-      service    = local.container_service_profile
-      attributes = ["service", "task"]
-      created_at = null
-      extra_tags = {}
-    }
+  # EBS volumes that ECS manages at launch (configure_at_launch). These are
+  # the only volumes that need tag_specifications - EFS/host-path volumes are
+  # not created by ECS and carry no cost of their own.
+  ebs_volumes = [for v in var.volumes : v if try(v.configure_at_launch, false) && try(v.ebs_volume_configuration, null) != null]
+
+  # block_storage profile per managed volume: stable-config fields only
+  # (size/type/iops/file_system_type all change only via an explicit apply),
+  # so they're safe to tag without drift risk.
+  ebs_block_storage_profiles = {
+    for v in local.ebs_volumes : v.name => merge(
+      { size_gb = try(v.ebs_volume_configuration.size_in_gib, null) },
+      { type = try(v.ebs_volume_configuration.volume_type, null) },
+      { iops = try(v.ebs_volume_configuration.iops, null) },
+      { file_system_type = try(v.ebs_volume_configuration.file_system_type, null) },
+    )
   }
+
+  taggable = merge(
+    {
+      this = {
+        name       = var.name
+        service    = local.container_service_profile
+        attributes = ["service"]
+        created_at = null
+        extra_tags = {}
+      }
+      task = {
+        name       = "${var.name}-task"
+        service    = local.container_service_profile
+        attributes = ["service", "task"]
+        created_at = null
+        extra_tags = {}
+      }
+    },
+    # One taggable entry per managed EBS volume so the volume itself carries
+    # the same standardized cost tags as the rest of the stack.
+    { for v in local.ebs_volumes : "ebs-${v.name}" => {
+      name       = "${var.name}-${v.name}"
+      service    = merge(local.container_service_profile, { block_storage = local.ebs_block_storage_profiles[v.name] })
+      attributes = ["service", "ebs", v.name]
+      created_at = null
+      extra_tags = {}
+    } },
+  )
 
   execution_role_arn = coalesce(var.execution_role_arn, var.default_execution_role_arn)
 
@@ -88,8 +116,14 @@ resource "aws_ecs_service" "this" {
   deployment_minimum_healthy_percent = var.deployment_minimum_healthy_percent
   health_check_grace_period_seconds  = var.health_check_grace_period_seconds
   enable_execute_command             = var.enable_execute_command
-  wait_for_steady_state              = var.wait_for_steady_state
-  force_new_deployment               = var.force_new_deployment
+  # ECS-managed tags: when enabled, ECS automatically tags every launched task
+  # and every EBS volume it attaches with aws:ecs:clusterName /
+  # aws:ecs:serviceName plus the user-added task-definition/service tags. This
+  # is what makes cost allocation work in Cost Explorer / CUR for the runtime-
+  # created volumes and tasks that Terraform doesn't manage directly.
+  enable_ecs_managed_tags = var.enable_ecs_managed_tags
+  wait_for_steady_state   = var.wait_for_steady_state
+  force_new_deployment    = var.force_new_deployment
 
   dynamic "network_configuration" {
     for_each = var.network_mode == "awsvpc" ? [var.network_configuration] : []
@@ -155,6 +189,16 @@ resource "aws_ecs_service" "this" {
           throughput       = try(managed_ebs_volume.value.throughput, null)
           file_system_type = try(managed_ebs_volume.value.file_system_type, null)
           volume_type      = try(managed_ebs_volume.value.volume_type, null)
+
+          # Tag the ECS-managed volume directly so it carries the same
+          # standardized cost tags as the rest of the stack (including the
+          # block_storage profile: size/type/iops/file_system_type). Without
+          # this the volume is created untagged by the ECS runtime and shows
+          # up as "unallocated" in Cost Explorer / CUR.
+          tag_specifications {
+            resource_type = "volume"
+            tags          = local.tagger_tags["ebs-${volume_configuration.value.name}"]
+          }
         }
       }
     }

@@ -109,6 +109,12 @@ variable "enable_execute_command" {
   default = false
 }
 
+variable "enable_ecs_managed_tags" {
+  description = "Enable ECS-managed tags: ECS auto-tags launched tasks and attached EBS volumes with cluster/service identity plus user-added task-definition/service tags. Required for cost allocation of runtime-created resources in Cost Explorer / CUR."
+  type        = bool
+  default     = true
+}
+
 variable "wait_for_steady_state" {
   type    = bool
   default = false
