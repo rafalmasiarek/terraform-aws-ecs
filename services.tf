@@ -29,6 +29,10 @@ module "service" {
   cluster_name = aws_ecs_cluster.this.name
   name         = "${var.name}-${each.key}"
 
+  # Auto-discover this service's container ports and open them on the cluster
+  # SG so the service is reachable from other tasks/LBs without manual wiring.
+  cluster_security_group_id = aws_security_group.this.id
+
   container_definitions = each.value.container_definitions
 
   task_cpu                   = try(each.value.task_cpu, null)
