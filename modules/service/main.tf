@@ -74,31 +74,12 @@ locals {
     [for pm in try(c.portMappings, []) : pm.containerPort]
   ]...)))
 
-  # Collapse consecutive ports into ranges to keep the rule count low (AWS
-  # allows 200 ingress rules per SG). HCL's sort() is lexicographic for
-  # numbers, so we zero-pad to force numeric ordering. A port starts a new
-  # "run" when it is the first or not exactly one more than the previous; each
-  # run becomes one {from, to} range (a lone port has from == to).
-  #   e.g. [80, 443, 8080, 8081, 8082] ->
-  #        [{from=80,to=442}, {from=443,to=8079}, {from=8080,to=8082}]
-  service_ports_padded = [for p in local.service_container_ports : format("%05d", p)]
-  service_ports_sorted = [for sp in sort(local.service_ports_padded) : tonumber(sp)]
-  service_port_run_starts = distinct([
-    for i, p in local.service_ports_sorted : p
-    if i == 0 || p != local.service_ports_sorted[i - 1] + 1
-  ])
-  service_port_last = local.service_ports_sorted[length(local.service_ports_sorted) - 1]
-  # Next run start after each run (null for the final run). Run starts are
-  # already in numeric order, so the next one is simply the following element.
-  service_port_next_run = {
-    for idx, rs in local.service_port_run_starts : rs => idx + 1 < length(local.service_port_run_starts) ? local.service_port_run_starts[idx + 1] : null
-  }
-  service_port_ranges = [
-    for rs in local.service_port_run_starts : {
-      from = rs
-      to   = local.service_port_next_run[rs] == null ? local.service_port_last : local.service_port_next_run[rs] - 1
-    }
-  ]
+  # One ingress rule per distinct container port. We deliberately do NOT
+  # collapse consecutive ports into ranges: grouping [80, 443] would open
+  # 80-442 (filling the gap), which is broader than what the service actually
+  # listens on. Per-port rules are precise and the rule count stays well under
+  # the AWS 200-ingress-rules-per-SG limit for typical services (1-5 ports).
+  service_port_ranges = [for p in local.service_container_ports : { from = p, to = p }]
 
   # Only open ports when we know which SG to put the rules on.
   auto_ingress_enabled = var.cluster_security_group_id != null && length(local.service_port_ranges) > 0
