@@ -8,6 +8,38 @@ locals {
 
   # Discover which metric-exporting addons are active.
   obs_has_traefik = local.addon_enabled.traefik
+
+  # SNS topic resolution:
+  # 1. User provides existing sns_topic_arn -> use it
+  # 2. create_sns_topic = true -> module creates one
+  # 3. Neither -> no alarm_actions (alarms exist but notify nowhere)
+  obs_create_sns   = try(local.obs_cfg.create_sns_topic, false)
+  obs_sns_topic_arn = coalesce(
+    try(local.obs_cfg.sns_topic_arn, null),
+    local.obs_create_sns ? aws_sns_topic.this[0].arn : null,
+  )
+
+  # Alarm actions: list of SNS topic ARNs to notify on ALARM state.
+  obs_alarm_actions = local.obs_sns_topic_arn != null ? [local.obs_sns_topic_arn] : []
+
+  # Custom additional SNS topics (user-managed, for fan-out to Slack/PagerDuty/etc.)
+  obs_custom_sns_topics = coalesce(try(local.obs_cfg.custom_sns_topics, null), [])
+  obs_all_alarm_actions = concat(local.obs_alarm_actions, local.obs_custom_sns_topics)
+}
+
+# ---------------------------------------------------------------------------
+# SNS Topic (optional, created by the module)
+# ---------------------------------------------------------------------------
+
+resource "aws_sns_topic" "this" {
+  count = local.obs_enabled && local.obs_create_sns ? 1 : 0
+
+  name = coalesce(try(local.obs_cfg.sns_topic_name, null), "${var.cluster_name}-addons-alerts")
+
+  # No resource policy: access is controlled via IAM (CloudWatch, EventBridge).
+  # The topic is NOT publicly accessible.
+
+  tags = merge(var.tags, coalesce(try(local.obs_cfg.tags, null), {}))
 }
 
 # ---------------------------------------------------------------------------
@@ -107,6 +139,7 @@ resource "aws_cloudwatch_metric_alarm" "service_tasks_zero" {
   }
 
   alarm_description = "Addon ${each.key} has fewer than 1 running task for 10 minutes."
+  alarm_actions     = local.obs_all_alarm_actions
 }
 
 # Alarm: Node CPU sustained above threshold.
@@ -127,6 +160,7 @@ resource "aws_cloudwatch_metric_alarm" "node_cpu_high" {
   }
 
   alarm_description = "Any node sustained >${try(local.obs_cfg.cpu_alarm_threshold, 80)}% CPU for 15 minutes."
+  alarm_actions     = local.obs_all_alarm_actions
 }
 
 # Alarm: Node memory sustained above threshold.
@@ -147,4 +181,53 @@ resource "aws_cloudwatch_metric_alarm" "node_memory_high" {
   }
 
   alarm_description = "Any node sustained >${try(local.obs_cfg.memory_alarm_threshold, 90)}% memory for 15 minutes."
+  alarm_actions     = local.obs_all_alarm_actions
+}
+
+# ---------------------------------------------------------------------------
+# CloudWatch Event Rules: ASG scaling + ECS deployment events -> SNS
+# ---------------------------------------------------------------------------
+
+# ASG lifecycle events (scale up/down, instance launch/terminate).
+resource "aws_cloudwatch_event_rule" "asg_scaling" {
+  count = length(local.obs_all_alarm_actions) > 0 ? 1 : 0
+
+  name          = "${var.cluster_name}-addons-asg-scaling"
+  description   = "ASG scaling events for ${var.cluster_name} node groups"
+  event_pattern = jsonencode({
+    source = ["aws.autoscaling"]
+    detail_type = ["EC2 Auto Scaling group scaling activity", "EC2 Auto Scaling group lifecycle action"]
+    detail = {
+      AutoScalingGroupName = ["${var.cluster_name}-*"]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "asg_scaling_sns" {
+  count = length(local.obs_all_alarm_actions) > 0 ? 1 : 0
+
+  rule      = aws_cloudwatch_event_rule.asg_scaling[0].name
+  arn      = local.obs_all_alarm_actions[0]
+}
+
+# ECS service deployment events (DEPLOYMENT_STARTED, DEPLOYMENT_SUCCEEDED, DEPLOYMENT_FAILED).
+resource "aws_cloudwatch_event_rule" "ecs_deployments" {
+  count = length(local.obs_all_alarm_actions) > 0 ? 1 : 0
+
+  name          = "${var.cluster_name}-addons-ecs-deployments"
+  description   = "ECS deployment events for ${var.cluster_name}"
+  event_pattern = jsonencode({
+    source = ["aws.ecs"]
+    detail_type = ["ECS Deployment"]
+    detail = {
+      clusterArn = [var.cluster_id]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "ecs_deployments_sns" {
+  count = length(local.obs_all_alarm_actions) > 0 ? 1 : 0
+
+  rule      = aws_cloudwatch_event_rule.ecs_deployments[0].name
+  arn      = local.obs_all_alarm_actions[0]
 }
