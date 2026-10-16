@@ -35,6 +35,11 @@ output "services" {
   } }
 }
 
+output "infrastructure_role_arn" {
+  description = "ARN of the ECS infrastructure role (for EBS task volume management). Null when create_infrastructure_role is false and no override is provided."
+  value       = coalesce(var.infrastructure_role_arn, var.create_infrastructure_role ? aws_iam_role.infrastructure[0].arn : null)
+}
+
 output "addons" {
   description = "Add-on outputs per enabled preset (null when cluster_addons is unset)."
   value = var.cluster_addons == null ? null : {

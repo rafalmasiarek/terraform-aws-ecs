@@ -66,6 +66,18 @@ variable "services" {
   default     = {}
 }
 
+variable "create_infrastructure_role" {
+  description = "Create the ECS infrastructure IAM role that allows Amazon ECS to manage EBS volumes attached to tasks (AmazonECSInfrastructureRolePolicyForVolumes). Set false and pass infrastructure_role_arn if you already manage this elsewhere."
+  type        = bool
+  default     = true
+}
+
+variable "infrastructure_role_arn" {
+  description = "ARN of an existing ECS infrastructure role to use for EBS task volumes. When set, create_infrastructure_role is ignored."
+  type        = string
+  default     = null
+}
+
 variable "cluster_addons" {
   description = "ECS cluster infrastructure add-ons: traefik, opentelemetry, cloudwatch_agent, fluent_bit, node_exporter, cadvisor, falco, blackbox_exporter. Omit (null) to disable all. See docs/addons.md and modules/addons/variables.tf for the full schema and per-preset semantics."
   type        = any
