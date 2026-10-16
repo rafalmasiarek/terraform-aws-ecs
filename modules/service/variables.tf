@@ -30,9 +30,21 @@ variable "network_mode" {
   default = "awsvpc"
 }
 
+variable "cluster_security_group_id" {
+  description = "The cluster's task security group. When set, the module auto-discovers every container port from container_definitions and opens an ingress rule on this SG (source: the SG itself) so the service is reachable from other cluster tasks/load balancers without manual SG wiring."
+  type        = string
+  default     = null
+}
+
 variable "requires_compatibilities" {
-  type    = list(string)
-  default = ["FARGATE"]
+  description = "Launch types the task definition is compatible with. Must match launch_type or capacity_provider_strategy. Defaults to [\"FARGATE\"] but should be set explicitly when using EC2."
+  type        = list(string)
+  default     = ["FARGATE"]
+
+  validation {
+    condition     = alltrue([for c in var.requires_compatibilities : contains(["EC2", "FARGATE", "EXTERNAL", "MANAGED_INSTANCES"], c)])
+    error_message = "requires_compatibilities may only contain \"EC2\", \"FARGATE\", \"EXTERNAL\", and/or \"MANAGED_INSTANCES\"."
+  }
 }
 
 variable "task_role_arn" {
@@ -52,8 +64,15 @@ variable "default_execution_role_arn" {
 }
 
 variable "volumes" {
-  type    = any
-  default = []
+  description = "List of volume configurations. Each entry: { name, host_path?, configure_at_launch?, efs_volume_configuration?, ebs_volume_configuration? }. EBS volumes require infrastructure_role_arn (or the cluster's default) for ECS to manage the volume lifecycle."
+  type        = any
+  default     = []
+}
+
+variable "infrastructure_role_arn" {
+  description = "ARN of the ECS infrastructure role for EBS task volume management. Falls back to the cluster's default when null."
+  type        = string
+  default     = null
 }
 
 variable "desired_count" {
@@ -96,9 +115,21 @@ variable "enable_execute_command" {
   default = false
 }
 
+variable "enable_ecs_managed_tags" {
+  description = "Enable ECS-managed tags: ECS auto-tags launched tasks and attached EBS volumes with cluster/service identity plus user-added task-definition/service tags. Required for cost allocation of runtime-created resources in Cost Explorer / CUR."
+  type        = bool
+  default     = true
+}
+
 variable "wait_for_steady_state" {
   type    = bool
   default = false
+}
+
+variable "scheduling_strategy" {
+  description = "\"DAEMON\" (one task per active container instance) or \"REPLICA\" (the default)."
+  type        = string
+  default     = "REPLICA"
 }
 
 variable "force_new_deployment" {

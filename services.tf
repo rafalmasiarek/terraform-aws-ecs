@@ -1,3 +1,25 @@
+# Auto-detect the default launch type and compatibility from the cluster's
+# capacity. Mixed clusters (EC2 + Fargate) get both compatibilities so the
+# ECS scheduler can place tasks optimally. Users can override per-service
+# via launch_type / capacity_provider_strategy / requires_compatibilities.
+locals {
+  # Capacity detection.
+  services_has_ec2_capacity     = length(var.node_groups) > 0
+  services_has_fargate_capacity = length(var.fargate_capacity_providers) > 0
+  services_is_mixed             = local.services_has_ec2_capacity && local.services_has_fargate_capacity
+
+  # Default launch type: FARGATE for mixed/pure-Fargate (serverless first),
+  # EC2 for pure-EC2 clusters.
+  services_default_launch_type = local.services_has_ec2_capacity && !local.services_has_fargate_capacity ? "EC2" : "FARGATE"
+
+  # Default requires_compatibilities: both for mixed, single otherwise.
+  # This lets the ECS scheduler choose optimal placement per task.
+  services_default_requires_compatibilities = concat(
+    local.services_has_ec2_capacity ? ["EC2"] : [],
+    local.services_has_fargate_capacity ? ["FARGATE"] : [],
+  )
+}
+
 module "service" {
   source = "./modules/service"
 
@@ -7,19 +29,24 @@ module "service" {
   cluster_name = aws_ecs_cluster.this.name
   name         = "${var.name}-${each.key}"
 
+  # Auto-discover this service's container ports and open them on the cluster
+  # SG so the service is reachable from other tasks/LBs without manual wiring.
+  cluster_security_group_id = aws_security_group.this.id
+
   container_definitions = each.value.container_definitions
 
   task_cpu                   = try(each.value.task_cpu, null)
   task_memory                = try(each.value.task_memory, null)
   network_mode               = try(each.value.network_mode, "awsvpc")
-  requires_compatibilities   = try(each.value.requires_compatibilities, ["FARGATE"])
+  requires_compatibilities   = try(each.value.requires_compatibilities, local.services_default_requires_compatibilities)
   task_role_arn              = try(each.value.task_role_arn, null)
   execution_role_arn         = try(each.value.execution_role_arn, null)
   default_execution_role_arn = var.create_task_execution_role ? aws_iam_role.task_execution[0].arn : null
   volumes                    = try(each.value.volumes, [])
+  infrastructure_role_arn    = var.infrastructure_role_arn != null ? var.infrastructure_role_arn : (var.create_infrastructure_role ? aws_iam_role.infrastructure[0].arn : null)
 
   desired_count              = try(each.value.desired_count, 1)
-  launch_type                = try(each.value.launch_type, "FARGATE")
+  launch_type                = try(each.value.launch_type, local.services_default_launch_type)
   capacity_provider_strategy = try(each.value.capacity_provider_strategy, [])
 
   deployment_maximum_percent         = try(each.value.deployment_maximum_percent, 200)
@@ -55,4 +82,5 @@ module "service" {
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context
   tags           = var.tags
+  origin_module  = "service"
 }

@@ -14,6 +14,26 @@ data "aws_ec2_instance_type" "this" {
 }
 
 locals {
+  # ECS platform context for the standardized tag set: the node group's ASG
+  # and its instances are tagged with the container profile ({ cluster,
+  # node_group }) so cost tooling can attribute node spend to the cluster.
+  node_group_service_profile = {
+    container = {
+      cluster    = var.cluster_name
+      node_group = var.name
+    }
+  }
+
+  taggable = {
+    this = {
+      name       = var.name
+      service    = local.node_group_service_profile
+      attributes = ["node-group"]
+      created_at = null
+      extra_tags = {}
+    }
+  }
+
   resolved_ami_id = var.ami_id != null ? var.ami_id : (
     contains(try(data.aws_ec2_instance_type.this[0].supported_architectures, []), "arm64")
     ? data.aws_ssm_parameter.ami_arm64[0].value
@@ -56,8 +76,14 @@ module "nodes" {
   associate_public_ip_address = var.associate_public_ip_address
   iam_instance_profile_name   = var.iam_instance_profile_name
   key_name                    = var.key_name
-  cloudinit_config            = local.node_group_cloudinit_config
-  block_device_mappings       = var.block_device_mappings
+  # The autoscale-group module forwards this as a wildcard passthrough to
+  # terraform-null-cloudinit (map of its inputs) - keep the map shape, but
+  # pin ssh_authorized_keys to a list: try() with a {} default would hand an
+  # empty object to a list(string) variable and fail the plan.
+  cloudinit_config = merge(local.node_group_cloudinit_config, {
+    ssh_authorized_keys = []
+  })
+  block_device_mappings = var.block_device_mappings
 
   min_size               = var.min_size
   max_size               = var.max_size
@@ -69,10 +95,11 @@ module "nodes" {
   # health check of its own, so EC2 (instance status) is the correct type.
   protect_from_scale_in = true
   health_check_type     = "EC2"
+  force_delete          = var.force_delete
 
   autoscaling_policies_enabled = var.autoscaling_policies_enabled
 
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context
-  tags           = var.tags
+  tags           = local.tagger_tags["this"]
 }
