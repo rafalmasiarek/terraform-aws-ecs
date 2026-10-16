@@ -198,7 +198,7 @@ locals {
       image            = local.addon_image.traefik
       essential        = true
       entryPoint       = ["/bin/sh", "-c"]
-      command          = [local.traefik_bootstrap]
+      command          = local.traefik_bootstrap
       environment      = [for k, v in local.traefik_env_map : { name = k, value = v } if v != null]
       portMappings     = local.traefik_port_mappings
       logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.traefik }
@@ -368,6 +368,17 @@ EOF
   # (EC2 daemon-style metrics & security agents)
   # ---------------------------------------------------------------------
 
+  # Shared host-path mount points for EC2 daemon-style agents. Each container
+  # gets the same set; volumesFrom is NOT used (it references other containers
+  # in the task, not named volumes).
+  host_mount_points = [
+    { sourceVolume = "host-root", containerPath = "/host", readOnly = true },
+    { sourceVolume = "host-var", containerPath = "/var", readOnly = true },
+    { sourceVolume = "host-dev", containerPath = "/dev", readOnly = true },
+    { sourceVolume = "host-proc", containerPath = "/proc", readOnly = true },
+    { sourceVolume = "host-sys", containerPath = "/sys", readOnly = true },
+  ]
+
   ne_cfg = try(var.cluster_addons.node_exporter, {})
   ne_container = {
     name             = "node-exporter"
@@ -377,7 +388,7 @@ EOF
     environment      = [for k, v in coalesce(try(local.ne_cfg.environment, null), {}) : { name = k, value = v }]
     portMappings     = [{ containerPort = try(local.ne_cfg.port, 9100), hostPort = try(local.ne_cfg.port, 9100), protocol = "tcp" }]
     logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.node_exporter }
-    volumesFrom      = ["host-root"]
+    mountPoints      = local.host_mount_points
   }
 
   cadvisor_cfg = try(var.cluster_addons.cadvisor, {})
@@ -389,7 +400,7 @@ EOF
     environment      = [for k, v in coalesce(try(local.cadvisor_cfg.environment, null), {}) : { name = k, value = v }]
     portMappings     = [{ containerPort = try(local.cadvisor_cfg.port, 8080), hostPort = try(local.cadvisor_cfg.port, 8080), protocol = "tcp" }]
     logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.cadvisor }
-    volumesFrom      = ["host-root"]
+    mountPoints      = local.host_mount_points
   }
 
   falco_cfg = try(var.cluster_addons.falco, {})
@@ -400,7 +411,7 @@ EOF
     command          = concat(["--driver", try(local.falco_cfg.driver_mode, "ebpf")], coalesce(try(local.falco_cfg.extra_args, null), []))
     environment      = [for k, v in coalesce(try(local.falco_cfg.environment, null), {}) : { name = k, value = v }]
     logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.falco }
-    volumesFrom      = ["host-root"]
+    mountPoints      = local.host_mount_points
   }
 
   bb_cfg = try(var.cluster_addons.blackbox_exporter, {})
