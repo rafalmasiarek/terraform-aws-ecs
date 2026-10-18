@@ -85,7 +85,7 @@ resource "aws_ecs_task_definition" "this" {
       configure_at_launch = try(volume.value.configure_at_launch, null)
 
       dynamic "efs_volume_configuration" {
-        for_each = try([volume.value.efs_volume_configuration], [])
+        for_each = try(volume.value.efs_volume_configuration, null) != null ? [volume.value.efs_volume_configuration] : []
         content {
           file_system_id          = efs_volume_configuration.value.file_system_id
           root_directory          = try(efs_volume_configuration.value.root_directory, null)
@@ -95,7 +95,7 @@ resource "aws_ecs_task_definition" "this" {
       }
 
       dynamic "docker_volume_configuration" {
-        for_each = try([volume.value.docker_volume_configuration], [])
+        for_each = try(volume.value.docker_volume_configuration, null) != null ? [volume.value.docker_volume_configuration] : []
         content {
           autoprovision = try(docker_volume_configuration.value.autoprovision, null)
           driver        = try(docker_volume_configuration.value.driver, null)
@@ -106,7 +106,7 @@ resource "aws_ecs_task_definition" "this" {
       }
 
       dynamic "fsx_windows_file_server_volume_configuration" {
-        for_each = try([volume.value.fsx_windows_file_server_volume_configuration], [])
+        for_each = try(volume.value.fsx_windows_file_server_volume_configuration, null) != null ? [volume.value.fsx_windows_file_server_volume_configuration] : []
         content {
           file_system_id = fsx_windows_file_server_volume_configuration.value.file_system_id
           root_directory = try(fsx_windows_file_server_volume_configuration.value.root_directory, null)
@@ -122,7 +122,7 @@ resource "aws_ecs_task_definition" "this" {
       }
 
       dynamic "s3files_volume_configuration" {
-        for_each = try([volume.value.s3files_volume_configuration], [])
+        for_each = try(volume.value.s3files_volume_configuration, null) != null ? [volume.value.s3files_volume_configuration] : []
         content {
           access_point_arn        = try(s3files_volume_configuration.value.access_point_arn, null)
           file_system_arn         = try(s3files_volume_configuration.value.file_system_arn, null)
