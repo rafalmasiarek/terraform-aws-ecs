@@ -18,9 +18,10 @@ locals {
   # 3. Neither -> no alarm_actions (alarms exist but notify nowhere)
   # obs_create_sns and obs_custom_sns_topics live in main.tf (shared with
   # local.taggable); only the ARN-dependent locals are defined here.
-  obs_sns_topic_arn = coalesce(
-    try(local.obs_cfg.sns_topic_arn, null),
-    local.obs_create_sns ? aws_sns_topic.this[0].arn : null,
+  # Plain conditional, not coalesce(): case 3 above (neither set) must
+  # resolve to null, and coalesce() errors when every argument is null.
+  obs_sns_topic_arn = try(local.obs_cfg.sns_topic_arn, null) != null ? local.obs_cfg.sns_topic_arn : (
+    local.obs_create_sns ? aws_sns_topic.this[0].arn : null
   )
 
   # Alarm actions: list of SNS topic ARNs to notify on ALARM state.
@@ -28,6 +29,13 @@ locals {
 
   # obs_custom_sns_topics lives in main.tf (shared with local.taggable).
   obs_all_alarm_actions = concat(local.obs_alarm_actions, local.obs_custom_sns_topics)
+
+  # Plan-time-known equivalent of `length(obs_all_alarm_actions) > 0`, for
+  # use in `count` expressions. obs_all_alarm_actions itself is unknown
+  # until apply when obs_create_sns=true (aws_sns_topic.this[0].arn isn't
+  # known yet), and Terraform rejects a count that depends on an unknown
+  # value - this only reads configuration, never a resource attribute.
+  obs_has_alarm_actions = try(local.obs_cfg.sns_topic_arn, null) != null || local.obs_create_sns || length(local.obs_custom_sns_topics) > 0
 }
 
 # ---------------------------------------------------------------------------
@@ -199,7 +207,7 @@ resource "aws_cloudwatch_metric_alarm" "node_memory_high" {
 
 # ASG lifecycle events (scale up/down, instance launch/terminate).
 resource "aws_cloudwatch_event_rule" "asg_scaling" {
-  count = length(local.obs_all_alarm_actions) > 0 ? 1 : 0
+  count = local.obs_has_alarm_actions ? 1 : 0
 
   name        = "${var.cluster_name}-addons-asg-scaling"
   description = "ASG scaling events for ${var.cluster_name} node groups"
@@ -215,7 +223,7 @@ resource "aws_cloudwatch_event_rule" "asg_scaling" {
 }
 
 resource "aws_cloudwatch_event_target" "asg_scaling_sns" {
-  count = length(local.obs_all_alarm_actions) > 0 ? 1 : 0
+  count = local.obs_has_alarm_actions ? 1 : 0
 
   rule = aws_cloudwatch_event_rule.asg_scaling[0].name
   arn  = local.obs_all_alarm_actions[0]
@@ -223,7 +231,7 @@ resource "aws_cloudwatch_event_target" "asg_scaling_sns" {
 
 # ECS service deployment events (DEPLOYMENT_STARTED, DEPLOYMENT_SUCCEEDED, DEPLOYMENT_FAILED).
 resource "aws_cloudwatch_event_rule" "ecs_deployments" {
-  count = length(local.obs_all_alarm_actions) > 0 ? 1 : 0
+  count = local.obs_has_alarm_actions ? 1 : 0
 
   name        = "${var.cluster_name}-addons-ecs-deployments"
   description = "ECS deployment events for ${var.cluster_name}"
@@ -239,7 +247,7 @@ resource "aws_cloudwatch_event_rule" "ecs_deployments" {
 }
 
 resource "aws_cloudwatch_event_target" "ecs_deployments_sns" {
-  count = length(local.obs_all_alarm_actions) > 0 ? 1 : 0
+  count = local.obs_has_alarm_actions ? 1 : 0
 
   rule = aws_cloudwatch_event_rule.ecs_deployments[0].name
   arn  = local.obs_all_alarm_actions[0]

@@ -16,7 +16,11 @@
 locals {
   traefik_ingress_cfg = try(local.traefik_cfg.ingress, {})
 
-  traefik_lb_subnets = length(coalesce(try(local.traefik_ingress_cfg.subnets, null), [])) > 0 ? local.traefik_ingress_cfg.subnets : [for s in data.aws_subnets.vpc[0].ids : s]
+  # Same reasoning as traefik_subnets in main.tf: never index
+  # data.aws_subnets.vpc when traefik is disabled (count=0 in that case).
+  traefik_lb_subnets = length(coalesce(try(local.traefik_ingress_cfg.subnets, null), [])) > 0 ? local.traefik_ingress_cfg.subnets : (
+    local.addon_enabled.traefik ? [for s in data.aws_subnets.vpc[0].ids : s] : []
+  )
 
   # Target type: instance targets for bridge (daemon) tasks, ip targets for
   # awsvpc (ECS rejects an ip-type TG registered with a bridge task).
@@ -57,7 +61,10 @@ resource "aws_lb_target_group" "traefik" {
 
   name        = "${var.cluster_name}-addon-traefik-${each.value}"
   port        = each.value
-  protocol    = local.traefik_nlb ? "TCP" : (each.value == 443 ? "TLS" : "HTTP")
+  # "TLS" is an NLB-only target group protocol - ALB (any port, including
+  # 443) always terminates at the listener via certificate_arn and forwards
+  # plain HTTP to the target.
+  protocol    = local.traefik_nlb ? "TCP" : "HTTP"
   vpc_id      = var.vpc_id
   target_type = local.traefik_tg_target_type
 
@@ -68,7 +75,7 @@ resource "aws_lb_target_group" "traefik" {
       interval            = 30
       path                = "/"
       port                = "traffic-port"
-      protocol            = each.value == 443 ? "HTTPS" : "HTTP"
+      protocol            = "HTTP"
       healthy_threshold   = 2
       unhealthy_threshold = 3
       timeout             = 5
@@ -86,7 +93,7 @@ resource "aws_lb_listener" "traefik" {
   port              = each.value.port
   protocol = coalesce(
     try(each.value.protocol, null),
-    local.traefik_nlb ? "TCP" : (each.value.port == 443 ? "TLS" : "HTTP"),
+    local.traefik_nlb ? "TCP" : (each.value.port == 443 ? "HTTPS" : "HTTP"),
   )
 
   certificate_arn = try(each.value.certificate_arn, null)

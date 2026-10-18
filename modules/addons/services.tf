@@ -16,6 +16,7 @@ module "traefik_service" {
 
   network_mode             = local.traefik_daemon ? "bridge" : "awsvpc"
   requires_compatibilities = local.traefik_compat
+  scheduling_strategy      = local.traefik_daemon ? "DAEMON" : "REPLICA"
 
   task_role_arn              = local.traefik_task_role_arn
   execution_role_arn         = local.traefik_execution_role_arn
@@ -75,7 +76,6 @@ module "opentelemetry_service" {
 
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
-  health_check_grace_period_seconds  = 30
   enable_execute_command             = true
   wait_for_steady_state              = false
 
@@ -118,7 +118,6 @@ module "cloudwatch_agent_service" {
 
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
-  health_check_grace_period_seconds  = 30
   enable_execute_command             = true
   wait_for_steady_state              = false
 
@@ -161,7 +160,6 @@ module "fluent_bit_service" {
 
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
-  health_check_grace_period_seconds  = 30
   enable_execute_command             = true
   wait_for_steady_state              = false
 
@@ -206,7 +204,6 @@ module "node_exporter_service" {
 
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
-  health_check_grace_period_seconds  = 30
   enable_execute_command             = true
   wait_for_steady_state              = false
 
@@ -244,7 +241,6 @@ module "cadvisor_service" {
 
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
-  health_check_grace_period_seconds  = 30
   enable_execute_command             = true
   wait_for_steady_state              = false
 
@@ -282,7 +278,6 @@ module "falco_service" {
 
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
-  health_check_grace_period_seconds  = 30
   enable_execute_command             = true
   wait_for_steady_state              = false
 
@@ -319,7 +314,6 @@ module "blackbox_exporter_service" {
 
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
-  health_check_grace_period_seconds  = 30
   enable_execute_command             = true
   wait_for_steady_state              = false
 
