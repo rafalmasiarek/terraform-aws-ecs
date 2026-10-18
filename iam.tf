@@ -1,3 +1,54 @@
+locals {
+  shared_profile_node_groups = [
+    for ng in values(var.node_groups) : ng
+    if try(ng.iam, null) == null && try(ng.iam_instance_profile_name, null) == null
+  ]
+
+  shared_profile_registry_auths = [
+    for ng in local.shared_profile_node_groups : try(ng.ecs_agent_config.registry_auth, null)
+    if try(ng.ecs_agent_config.registry_auth, null) != null
+  ]
+
+  # try(): root sees caller-inferred password object types (node_groups is type = any),
+  # so a registry whose password object lacks this attribute is a static "unsupported
+  # attribute" error without it - mixed plaintext/secretsmanager sources per node group.
+  instance_role_registry_sm_arns = flatten([
+    for ra in local.shared_profile_registry_auths : [
+      for c in values(ra.registries) : try(c.password.secretsmanager_secret_arn, null)
+      if try(c.password.secretsmanager_secret_arn, null) != null
+    ]
+  ])
+
+  instance_role_registry_kms_arns = flatten([
+    for ra in local.shared_profile_registry_auths : [
+      for c in values(ra.registries) : try(c.password.kms_key_arn, null)
+      if try(c.password.kms_key_arn, null) != null
+    ]
+  ])
+
+  instance_role_sm_arns  = concat(var.instance_role_least_privilege.secretsmanager_secret_arns, local.instance_role_registry_sm_arns)
+  instance_role_kms_arns = concat(var.instance_role_least_privilege.kms_key_arns, local.instance_role_registry_kms_arns)
+
+  # Plan-known length check: the rendered policy JSON is unknown while any
+  # scoped ARN comes from a resource created in the same apply, so the inline
+  # policy's count must be derived from the input structure, not the JSON.
+  instance_role_least_privilege_arns = concat(
+    var.instance_role_least_privilege.ecr_registry_arns,
+    local.instance_role_sm_arns,
+    var.instance_role_least_privilege.ssm_parameter_arns,
+    local.instance_role_kms_arns,
+    var.instance_role_least_privilege.route53_hosted_zone_arns,
+  )
+
+  task_execution_least_privilege_arns = concat(
+    var.task_execution_role_least_privilege.ecr_registry_arns,
+    var.task_execution_role_least_privilege.secretsmanager_secret_arns,
+    var.task_execution_role_least_privilege.ssm_parameter_arns,
+    var.task_execution_role_least_privilege.kms_key_arns,
+    var.task_execution_role_least_privilege.route53_hosted_zone_arns,
+  )
+}
+
 data "aws_iam_policy_document" "ec2_assume_role" {
   count = var.create_instance_iam_role ? 1 : 0
 
@@ -13,24 +64,67 @@ data "aws_iam_policy_document" "ec2_assume_role" {
 resource "aws_iam_role" "instance" {
   count = var.create_instance_iam_role ? 1 : 0
 
-  name               = "${var.name}-instance"
-  assume_role_policy = data.aws_iam_policy_document.ec2_assume_role[0].json
+  name                 = "${var.name}-instance"
+  assume_role_policy   = data.aws_iam_policy_document.ec2_assume_role[0].json
+  permissions_boundary = var.instance_role_permission_boundary_arn
 
   tags = local.tagger_tags["this"]
 }
 
-resource "aws_iam_role_policy_attachment" "instance_ecs" {
-  count = var.create_instance_iam_role ? 1 : 0
+resource "aws_iam_role_policy_attachment" "instance" {
+  for_each = var.create_instance_iam_role ? toset(concat(
+    [
+      "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role",
+      "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+    ],
+    var.instance_role_managed_policy_arns,
+  )) : toset([])
 
   role       = aws_iam_role.instance[0].name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+  policy_arn = each.value
 }
 
-resource "aws_iam_role_policy_attachment" "instance_ssm" {
-  count = var.create_instance_iam_role ? 1 : 0
+data "aws_iam_policy_document" "instance_inline" {
+  for_each = var.create_instance_iam_role ? var.instance_role_inline_policies : {}
 
-  role       = aws_iam_role.instance[0].name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  dynamic "statement" {
+    for_each = each.value
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "instance_inline" {
+  for_each = var.create_instance_iam_role ? var.instance_role_inline_policies : {}
+
+  name   = each.key
+  role   = aws_iam_role.instance[0].id
+  policy = data.aws_iam_policy_document.instance_inline[each.key].json
+}
+
+module "instance_least_privilege" {
+  source = "./modules/iam-policy-documents"
+  count  = var.create_instance_iam_role ? 1 : 0
+
+  least_privilege = {
+    ecr_registry_arns          = var.instance_role_least_privilege.ecr_registry_arns
+    secretsmanager_secret_arns = local.instance_role_sm_arns
+    ssm_parameter_arns         = var.instance_role_least_privilege.ssm_parameter_arns
+    kms_key_arns               = local.instance_role_kms_arns
+    route53_hosted_zone_arns   = var.instance_role_least_privilege.route53_hosted_zone_arns
+  }
+}
+
+resource "aws_iam_role_policy" "instance_least_privilege" {
+  count = var.create_instance_iam_role && length(local.instance_role_least_privilege_arns) > 0 ? 1 : 0
+
+  name   = "least-privilege"
+  role   = aws_iam_role.instance[0].id
+  policy = module.instance_least_privilege[0].json
 }
 
 resource "aws_iam_instance_profile" "instance" {
@@ -57,15 +151,97 @@ data "aws_iam_policy_document" "ecs_tasks_assume_role" {
 resource "aws_iam_role" "task_execution" {
   count = var.create_task_execution_role ? 1 : 0
 
-  name               = "${var.name}-task-execution"
-  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume_role[0].json
+  name                 = "${var.name}-task-execution"
+  assume_role_policy   = data.aws_iam_policy_document.ecs_tasks_assume_role[0].json
+  permissions_boundary = var.task_execution_role_permission_boundary_arn
 
   tags = local.tagger_tags["this"]
 }
 
 resource "aws_iam_role_policy_attachment" "task_execution" {
-  count = var.create_task_execution_role ? 1 : 0
+  for_each = var.create_task_execution_role ? toset(concat(
+    ["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"],
+    var.task_execution_role_managed_policy_arns,
+  )) : toset([])
 
   role       = aws_iam_role.task_execution[0].name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+  policy_arn = each.value
+}
+
+data "aws_iam_policy_document" "task_execution_inline" {
+  for_each = var.create_task_execution_role ? var.task_execution_role_inline_policies : {}
+
+  dynamic "statement" {
+    for_each = each.value
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "task_execution_inline" {
+  for_each = var.create_task_execution_role ? var.task_execution_role_inline_policies : {}
+
+  name   = each.key
+  role   = aws_iam_role.task_execution[0].id
+  policy = data.aws_iam_policy_document.task_execution_inline[each.key].json
+}
+
+module "task_execution_least_privilege" {
+  source = "./modules/iam-policy-documents"
+  count  = var.create_task_execution_role ? 1 : 0
+
+  least_privilege = var.task_execution_role_least_privilege
+}
+
+resource "aws_iam_role_policy" "task_execution_least_privilege" {
+  count = var.create_task_execution_role && length(local.task_execution_least_privilege_arns) > 0 ? 1 : 0
+
+  name   = "least-privilege"
+  role   = aws_iam_role.task_execution[0].id
+  policy = module.task_execution_least_privilege[0].json
+}
+
+data "aws_iam_policy_document" "ecs_infrastructure_assume" {
+  count = var.create_ecs_infrastructure_role ? 1 : 0
+
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ecs.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ecs_infrastructure" {
+  count = var.create_ecs_infrastructure_role ? 1 : 0
+
+  name               = "${var.name}-ecs-infrastructure"
+  assume_role_policy = data.aws_iam_policy_document.ecs_infrastructure_assume[0].json
+
+  tags = local.tagger_tags["this"]
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_infrastructure" {
+  count = var.create_ecs_infrastructure_role ? 1 : 0
+
+  role       = aws_iam_role.ecs_infrastructure[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRolePolicyForVolumes"
+}
+
+check "node_group_registry_auth_coverage" {
+  assert {
+    condition = alltrue([
+      for ng_key, ng in var.node_groups : (
+        (try(ng.iam, null) == null && try(ng.iam_instance_profile_name, null) == null)
+        || try(ng.iam.create, null) != null
+        || try(ng.ecs_agent_config.registry_auth, null) == null
+      )
+    ])
+    error_message = "One or more node_groups combine iam.use_existing or iam_instance_profile_name with ecs_agent_config.registry_auth (secretsmanager/kms-sourced password). This module has no role to attach the required IAM grant to - the ECS agent gets AccessDenied on secretsmanager:GetSecretValue at boot. Use iam.create for that node group, or grant the permission on the externally-supplied role yourself."
+  }
 }

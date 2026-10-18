@@ -1,5 +1,6 @@
 terraform {
-  required_version = ">= 1.8.5"
+  # >= 1.9: validation conditions may reference other variables (service_connect -> network_mode).
+  required_version = ">= 1.9.0"
 
   required_providers {
     aws = {
