@@ -197,4 +197,9 @@ variable "iam" {
     condition     = var.iam == null ? true : can(element([for _ in [1] : 1 if var.iam.use_existing == null || var.iam.create == null], 0))
     error_message = "Set at most one of iam.use_existing and iam.create."
   }
+
+  validation {
+    condition     = try(var.iam.create, null) != null || try(var.iam.use_existing, null) != null || var.iam_instance_profile_name != null
+    error_message = "No instance profile source: set iam.create, iam.use_existing, or iam_instance_profile_name. Without one of these, node_role_profile_name resolves to coalesce(null, null) and crashes the plan."
+  }
 }

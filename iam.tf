@@ -232,3 +232,16 @@ resource "aws_iam_role_policy_attachment" "ecs_infrastructure" {
   role       = aws_iam_role.ecs_infrastructure[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRolePolicyForVolumes"
 }
+
+check "node_group_registry_auth_coverage" {
+  assert {
+    condition = alltrue([
+      for ng_key, ng in var.node_groups : (
+        (try(ng.iam, null) == null && try(ng.iam_instance_profile_name, null) == null)
+        || try(ng.iam.create, null) != null
+        || try(ng.ecs_agent_config.registry_auth, null) == null
+      )
+    ])
+    error_message = "One or more node_groups combine iam.use_existing or iam_instance_profile_name with ecs_agent_config.registry_auth (secretsmanager/kms-sourced password). This module has no role to attach the required IAM grant to - the ECS agent gets AccessDenied on secretsmanager:GetSecretValue at boot. Use iam.create for that node group, or grant the permission on the externally-supplied role yourself."
+  }
+}
