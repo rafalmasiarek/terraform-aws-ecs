@@ -88,7 +88,7 @@ variable "scheduling_strategy" {
       && length(var.capacity_provider_strategy) == 0
       && var.launch_type != "FARGATE"
     )], 0))
-    error_message = "DAEMON services require launch_type = \"EC2\" and must not set desired_count, autoscaling_enabled, ordered_placement_strategy, or capacity_provider_strategy (AWS rejects any capacity provider strategy on DAEMON services)."
+    error_message = "DAEMON services cannot use launch_type = \"FARGATE\" (EC2 or EXTERNAL only) and must not set desired_count, autoscaling_enabled, ordered_placement_strategy, or capacity_provider_strategy (AWS rejects any capacity provider strategy on DAEMON services)."
   }
 }
 

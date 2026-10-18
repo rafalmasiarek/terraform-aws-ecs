@@ -24,7 +24,11 @@ locals {
   # An explicitly supplied existing log group also enables exec logging -
   # otherwise the destination is returned in outputs but never configured.
   exec_logging_enabled = var.create_cloudwatch_log_group || var.cloudwatch_log_group_name != null || var.exec_command_s3 != null
-  exec_cwl_name        = var.create_cloudwatch_log_group ? try(aws_cloudwatch_log_group.this[0].name, null) : coalesce(var.cloudwatch_log_group_name, local.cloudwatch_log_group_name)
+  # Falls back to the guessed name only when create_cloudwatch_log_group is
+  # true (the log group actually exists) or the caller explicitly named an
+  # existing one - never a blind guess, which would wire execute_command's
+  # log_configuration at a log group that was never created.
+  exec_cwl_name = var.create_cloudwatch_log_group ? try(aws_cloudwatch_log_group.this[0].name, null) : var.cloudwatch_log_group_name
 
   exec_s3_bucket_arn = local.exec_s3_bucket_name == null ? null : (
     local.exec_s3_bucket_create ? try(aws_s3_bucket.exec[0].arn, null) : "arn:aws:s3:::${local.exec_s3_bucket_name}"
@@ -104,6 +108,11 @@ data "aws_iam_policy_document" "exec_kms" {
     principals {
       type        = "Service"
       identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current[0].account_id]
     }
   }
 
