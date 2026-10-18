@@ -11,7 +11,7 @@ resource "aws_cloudwatch_log_group" "addon" {
   ], k) }
 
   name              = "/aws/ecs/${var.cluster_name}/addons/${each.key}"
-  retention_in_days = 14
+  retention_in_days = var.cloudwatch_log_group_retention_in_days
 
   tags = local.tagger_tags["loggroup-${each.key}"]
 }

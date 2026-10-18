@@ -68,7 +68,7 @@ data "tagger_origin" "self" {
 module "tagger" {
   for_each = var.use_tagger ? local.taggable : {}
   source   = "rafalmasiarek/tagger/null"
-  version  = ">= 0.5.0"
+  version  = ">= 0.7.0"
   context  = var.tagger_context
   name     = each.value.name
 
