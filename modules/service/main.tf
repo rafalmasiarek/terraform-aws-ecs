@@ -88,7 +88,11 @@ resource "aws_ecs_task_definition" "this" {
       configure_at_launch = try(volume.value.configure_at_launch, false)
 
       dynamic "efs_volume_configuration" {
-        for_each = try([volume.value.efs_volume_configuration], [])
+        # try() only guards a missing attribute - an object with the key
+        # present but null (common when a caller builds one shared shape
+        # for both efs/ebs volumes) would otherwise run this block against
+        # a null value.
+        for_each = try(volume.value.efs_volume_configuration, null) != null ? [volume.value.efs_volume_configuration] : []
         content {
           file_system_id          = efs_volume_configuration.value.file_system_id
           root_directory          = try(efs_volume_configuration.value.root_directory, null)
@@ -188,7 +192,7 @@ resource "aws_ecs_service" "this" {
       name = volume_configuration.value.name
 
       dynamic "managed_ebs_volume" {
-        for_each = try([volume_configuration.value.ebs_volume_configuration], [])
+        for_each = try(volume_configuration.value.ebs_volume_configuration, null) != null ? [volume_configuration.value.ebs_volume_configuration] : []
         content {
           role_arn         = coalesce(try(managed_ebs_volume.value.role_arn, null), var.infrastructure_role_arn)
           size_in_gb       = try(managed_ebs_volume.value.size_in_gib, null)

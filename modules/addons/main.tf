@@ -32,12 +32,20 @@ locals {
     var.cluster_addons != null && contains(keys(var.cluster_addons), k) ? try(var.cluster_addons[k].enabled, true) : false
   ) }
 
-  addon_services = { for k, v in local.addon_enabled : k => v if v }
+  # "observability" is a management-plane toggle (dashboard + alarms, no
+  # task definition/ECS service) - excluded here so every consumer (IAM
+  # roles, the per-service alarm, tagging) doesn't need its own exclusion.
+  addon_services = { for k, v in local.addon_enabled : k => v if v && k != "observability" }
 
   # Enabled presets need a cluster SG; LB/port-rule presets need a VPC.
+  # traefik needs VPC subnet data unconditionally, not just in create_lb
+  # mode - traefik_subnets/traefik_lb_subnets fall back to the whole VPC's
+  # subnets whenever the caller doesn't supply an explicit subnet list,
+  # and that fallback is reachable in every ingress mode (daemon excepted,
+  # but gating on create_lb alone broke existing-LB mode's task placement).
   addons_require_sg = length(local.addon_services) > 0
   addons_require_vpc = anytrue([
-    local.addon_enabled.traefik && local.traefik_create_lb,
+    local.addon_enabled.traefik,
     local.addon_enabled.opentelemetry,
     local.addon_enabled.cloudwatch_agent,
     local.addon_enabled.fluent_bit,
@@ -217,7 +225,13 @@ locals {
   traefik_routes_count = try(var.plan_facts.traefik_routes_count, 0)
 
   # Subnets: awsvpc tasks default to every available subnet of the VPC.
-  traefik_subnets = length(coalesce(try(local.traefik_cfg.subnets, null), [])) > 0 ? local.traefik_cfg.subnets : [for s in data.aws_subnets.vpc[0].ids : s]
+  # Locals are evaluated unconditionally regardless of addon_enabled, so the
+  # fallback branch must not index data.aws_subnets.vpc when traefik is
+  # disabled - that data source only exists (count=1) when some enabled
+  # addon actually needs it, which excludes a traefik-disabled config.
+  traefik_subnets = length(coalesce(try(local.traefik_cfg.subnets, null), [])) > 0 ? local.traefik_cfg.subnets : (
+    local.addon_enabled.traefik ? [for s in data.aws_subnets.vpc[0].ids : s] : []
+  )
 
   # Declarative routes -> dynamic file provider config, delivered through
   # an SSM parameter secret (TRAEFIK_ROUTES) written to /etc/traefik/dynamic.
@@ -415,8 +429,8 @@ locals {
         } : {},
       )
       service = { pipelines = {
-        traces  = { receivers = ["otlp"], processors = ["batch"], exporters = compact(["otlp/awsxray", local.otel_otlp_enabled ? "otlp" : null]) }
-        metrics = { receivers = compact(["otlp", local.otel_discovery_enabled ? "ec2scraper" : null]), processors = ["batch"], exporters = compact(["otlp/awscloudwatch", local.otel_otlp_enabled ? "otlp" : null]) }
+        traces  = { receivers = ["otlp"], processors = ["batch"], exporters = compact([local.otel_xray_enabled ? "otlp/awsxray" : null, local.otel_otlp_enabled ? "otlp" : null]) }
+        metrics = { receivers = compact(["otlp", local.otel_discovery_enabled ? "ec2scraper" : null]), processors = ["batch"], exporters = compact([local.otel_cloudwatch_enabled ? "otlp/awscloudwatch" : null, local.otel_otlp_enabled ? "otlp" : null]) }
       } }
     }),
   )
@@ -490,7 +504,7 @@ locals {
     Name              cloudwatch
     Match             ecs.*
     Region            ${data.aws_region.current.region}
-    Log_Group_Name    /aws/ecs/${var.cluster_name}/addons/fluent-bit
+    Log_Group_Name    ${local.awslogs_options.fluent_bit["awslogs-group"]}
     Log_Stream_Name   {stream_name}
     Topic_Name        ecs
     Auto_Create_Group true

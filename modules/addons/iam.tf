@@ -22,6 +22,9 @@ locals {
   addon_base_execution_policies = { for k in local.addon_all_keys : k => ["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"] }
 
   # Base task policies (the minimum the agent itself needs beyond logging).
+  # Only presets that call an AWS API from inside the container need one -
+  # node_exporter/cadvisor/falco/blackbox_exporter only expose metrics over
+  # HTTP or scan the local host, no AWS API calls.
   addon_base_task_policies = {
     traefik           = []
     opentelemetry     = []
@@ -31,6 +34,45 @@ locals {
     cadvisor          = []
     falco             = []
     blackbox_exporter = []
+  }
+
+  # Base inline statements, merged with extra_task_policies.inline_policies
+  # below. List/describe-only actions (no resource-level permissions in
+  # IAM) stay Resource="*"; log-group-scoped actions are scoped to this
+  # preset's own addon log group.
+  addon_base_task_inline_policies = {
+    traefik = {
+      ecs-discovery = [{
+        effect    = "Allow"
+        actions   = ["ecs:ListClusters", "ecs:ListTasks", "ecs:DescribeTasks", "ecs:DescribeTaskDefinition", "ecs:DescribeContainerInstances", "ec2:DescribeInstances"]
+        resources = ["*"]
+      }]
+    }
+    cloudwatch_agent = {
+      metrics = [{
+        effect    = "Allow"
+        actions   = ["cloudwatch:PutMetricData"]
+        resources = ["*"]
+      }]
+    }
+    fluent_bit = {
+      logs = [{
+        effect    = "Allow"
+        actions   = ["logs:PutLogEvents", "logs:CreateLogStream", "logs:DescribeLogStreams"]
+        resources = ["arn:aws:logs:*:*:log-group:/aws/ecs/${var.cluster_name}/addons/*:*"]
+      }]
+    }
+    opentelemetry = {
+      export = [{
+        effect    = "Allow"
+        actions   = ["cloudwatch:PutMetricData", "xray:PutTraceSegments", "xray:PutTelemetryRecords", "logs:PutLogEvents", "logs:CreateLogStream", "logs:DescribeLogStreams"]
+        resources = ["*"]
+      }]
+    }
+    node_exporter     = {}
+    cadvisor          = {}
+    falco             = {}
+    blackbox_exporter = {}
   }
 
   addon_extra_task_policies = { for k in keys(local.addon_services) : k => try(var.cluster_addons[k].extra_task_policies, {}) }
@@ -87,19 +129,25 @@ resource "aws_iam_role_policy_attachment" "execution_managed" {
   policy_arn = each.value.arn
 }
 
-# Inline policies from extra_task_policies.inline_policies.
+# Inline policies: this preset's base statements + extra_task_policies.inline_policies.
 resource "aws_iam_role_policy" "task_inline" {
   for_each = {
     for pair in flatten([
       for k in keys(local.addon_services) : [
-        for sid, stmts in coalesce(try(local.addon_extra_task_policies[k].inline_policies, null), {}) : [
+        for sid, stmts in merge(
+          coalesce(try(local.addon_base_task_inline_policies[k], null), {}),
+          coalesce(try(local.addon_extra_task_policies[k].inline_policies, null), {}),
+          ) : [
           for s in stmts : { key = "${k}:${sid}", service_key = k, sid = sid, effect = s.effect, actions = s.actions, resources = s.resources }
         ]
       ]
     ]) : pair.key => pair
   }
 
-  name = "${var.cluster_name}-addon-${each.value.service_key}-inline"
+  # sid must be part of the name - two sids on the same role previously
+  # collided on an identical name, so the second PutRolePolicy silently
+  # overwrote the first.
+  name = "${var.cluster_name}-addon-${each.value.service_key}-inline-${each.value.sid}"
   role = aws_iam_role.task[each.value.service_key].id
   policy = jsonencode({
     Version = "2012-10-17"
@@ -129,6 +177,7 @@ resource "aws_iam_role_policy" "execution_awslogs" {
       Effect = "Allow"
       Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogGroups", "logs:DescribeLogStreams", "logs:PutLogEvents"]
       Resource = [
+        "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/ecs/${var.cluster_name}*",
         "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/ecs/${var.cluster_name}*:log-stream:*",
       ]
     }]
@@ -145,11 +194,26 @@ resource "aws_iam_role_policy" "traefik_acme_dns" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["route53:ChangeResourceRecordSets", "route53:ListHostZones"]
-      Resource = ["*"]
-    }]
+    Statement = [
+      {
+        Sid      = "ListZones"
+        Effect   = "Allow"
+        Action   = ["route53:ListHostedZones"]
+        Resource = ["*"]
+      },
+      {
+        Sid      = "ChangeRecords"
+        Effect   = "Allow"
+        Action   = ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets"]
+        Resource = ["arn:aws:route53:::hostedzone/*"]
+      },
+      {
+        Sid      = "PollChange"
+        Effect   = "Allow"
+        Action   = ["route53:GetChange"]
+        Resource = ["arn:aws:route53:::change/*"]
+      },
+    ]
   })
 }
 

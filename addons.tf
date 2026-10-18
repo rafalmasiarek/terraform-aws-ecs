@@ -30,8 +30,11 @@ locals {
   addons_traefik_internal  = local.addons_traefik_create_lb ? try(local.addons_traefik_ingress.internal, true) : false
 
   # A 443 entrypoint exists when traefik manages TLS itself (ACME or manual
-  # certs) or an existing LB forwards a TLS listener to the container.
-  addons_traefik_entrypoint_443 = contains(["traefik", "manual"], try(local.addons_traefik.tls.managed_by, "lb")) || (!local.addons_traefik_create_lb && try(local.addons_traefik_ingress.tls_enabled, false))
+  # certs), or TLS is enabled on an ALB this module creates (ACM-terminated
+  # at the listener), or an existing LB forwards a TLS listener to the
+  # container. tls_enabled must trigger this regardless of who creates the
+  # LB - a create-mode ALB with tls_enabled=true also needs a 443 listener.
+  addons_traefik_entrypoint_443 = contains(["traefik", "manual"], try(local.addons_traefik.tls.managed_by, "lb")) || try(local.addons_traefik_ingress.tls_enabled, false)
 
   addons_traefik_routes_count = length(coalesce(try(local.addons_traefik.routes, null), []))
   addons_traefik_acme         = try(local.addons_traefik.tls.managed_by, "lb") == "traefik" && try(local.addons_traefik.tls.acme, null) != null
@@ -43,8 +46,9 @@ module "addons" {
 
   cluster_id                 = aws_ecs_cluster.this.id
   cluster_name               = aws_ecs_cluster.this.name
-  vpc_id                     = var.vpc_id
-  cluster_security_group_id  = aws_security_group.this.id
+  vpc_id                                  = var.vpc_id
+  cluster_security_group_id               = aws_security_group.this.id
+  cloudwatch_log_group_retention_in_days  = var.cloudwatch_log_group_retention_in_days
   default_execution_role_arn = var.create_task_execution_role ? aws_iam_role.task_execution[0].arn : null
   infrastructure_role_arn    = var.infrastructure_role_arn != null ? var.infrastructure_role_arn : (var.create_infrastructure_role ? aws_iam_role.infrastructure[0].arn : null)
 

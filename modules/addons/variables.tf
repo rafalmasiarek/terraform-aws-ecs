@@ -14,6 +14,12 @@ variable "vpc_id" {
   default     = null
 }
 
+variable "cloudwatch_log_group_retention_in_days" {
+  description = "Retention for every addon task's CloudWatch log group."
+  type        = number
+  default     = 30
+}
+
 variable "cluster_security_group_id" {
   description = "Cluster security group ID. Task ENIs (awsvpc) and node host ports (bridge) join this SG."
   type        = string
@@ -444,7 +450,7 @@ variable "cluster_addons" {
   # config - fail at plan time instead.
   validation {
     condition = var.cluster_addons == null ? true : (
-      var.cluster_addons.opentelemetry == null || try(var.cluster_addons.opentelemetry.exporters, null) == null || try(var.cluster_addons.opentelemetry.exporters.otlp, null) == null ? true : (
+      try(var.cluster_addons.opentelemetry, null) == null || try(var.cluster_addons.opentelemetry.exporters, null) == null || try(var.cluster_addons.opentelemetry.exporters.otlp, null) == null ? true : (
         !try(var.cluster_addons.opentelemetry.exporters.otlp.enabled, true) || var.cluster_addons.opentelemetry.exporters.otlp.endpoint != null
       )
     )
