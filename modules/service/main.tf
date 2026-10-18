@@ -66,8 +66,13 @@ locals {
     [for pm in try(c.portMappings, []) : pm.containerPort]
   ]...)))
 
-  service_port_ranges  = [for p in local.service_container_ports : { from = p, to = p }]
-  auto_ingress_enabled = var.cluster_security_group_id != null && length(local.service_port_ranges) > 0
+  service_port_ranges = [for p in local.service_container_ports : { from = p, to = p }]
+  # coalesce() short-circuits on the first non-null argument without
+  # needing the second to be known - callers that pass a literal
+  # auto_ingress_enabled avoid ever evaluating the unknown-unsafe
+  # `cluster_security_group_id != null` check (see that variable's
+  # description).
+  auto_ingress_enabled = coalesce(var.auto_ingress_enabled, var.cluster_security_group_id != null) && length(local.service_port_ranges) > 0
 }
 
 resource "aws_ecs_task_definition" "this" {

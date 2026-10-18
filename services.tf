@@ -26,7 +26,12 @@ module "service" {
 
   # Auto-discover this service's container ports and open them on the cluster
   # SG so the service is reachable from other tasks/LBs without manual wiring.
+  # aws_security_group.this.id is unknown on a fresh apply - pass the literal
+  # true explicitly so the child module's for_each doesn't have to derive
+  # "is this enabled" from that unknown value (see auto_ingress_enabled's
+  # description in modules/service/variables.tf).
   cluster_security_group_id = aws_security_group.this.id
+  auto_ingress_enabled      = true
 
   container_definitions = each.value.container_definitions
 

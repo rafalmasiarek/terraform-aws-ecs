@@ -36,6 +36,12 @@ variable "cluster_security_group_id" {
   default     = null
 }
 
+variable "auto_ingress_enabled" {
+  description = "Explicitly enable/disable the auto-ingress wiring, decoupled from cluster_security_group_id's own value. On a fresh cluster the caller typically passes the SG's id straight from the resource (e.g. aws_security_group.this.id) before it's created - that value is unknown at plan time, and a `for_each` cannot be gated on `cluster_security_group_id != null` when the id itself is unknown (Terraform cannot determine the for_each key set). Callers that always want this feature should pass a literal true/false here instead of relying on cluster_security_group_id's nullness. Null falls back to the (unknown-unsafe) nullness check for backward compatibility with callers that pass an already-known id or omit the argument entirely."
+  type        = bool
+  default     = null
+}
+
 variable "requires_compatibilities" {
   description = "Launch types the task definition is compatible with. Must match launch_type or capacity_provider_strategy. Defaults to [\"FARGATE\"] but should be set explicitly when using EC2."
   type        = list(string)
