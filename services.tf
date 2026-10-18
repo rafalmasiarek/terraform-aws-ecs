@@ -1,16 +1,11 @@
-# Auto-detect the default launch type and compatibility from the cluster's
-# capacity. Mixed clusters (EC2 + Fargate) get both compatibilities so the
-# ECS scheduler can place tasks optimally. Users can override per-service
-# via launch_type / capacity_provider_strategy / requires_compatibilities.
 locals {
-  # Capacity detection.
   services_has_ec2_capacity     = length(var.node_groups) > 0
   services_has_fargate_capacity = length(var.fargate_capacity_providers) > 0
   services_is_mixed             = local.services_has_ec2_capacity && local.services_has_fargate_capacity
 
-  # Default launch type: FARGATE for mixed/pure-Fargate (serverless first),
-  # EC2 for pure-EC2 clusters.
-  services_default_launch_type = local.services_has_ec2_capacity && !local.services_has_fargate_capacity ? "EC2" : "FARGATE"
+  # FARGATE always. launch_type is ForceNew; auto-flipping to EC2 on node_groups
+  # presence would destroy/recreate services. Override per-service for EC2.
+  services_default_launch_type = "FARGATE"
 
   # Default requires_compatibilities: both for mixed, single otherwise.
   # This lets the ECS scheduler choose optimal placement per task.
