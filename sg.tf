@@ -100,7 +100,25 @@ locals {
     if r.port != 0
   }
 
-  service_port_rules = { for k, items in local.service_port_rules_grouped : k => items[0] }
+  # Custom rules that target the exact same (protocol, port, cidr) tuple as
+  # an auto-opened one would collide at apply (AWS rejects duplicate SG
+  # permissions). Build the same key format for single-port custom entries
+  # and drop the auto-generated rule in favor of the explicit one.
+  custom_ingress_port_keys = toset(concat(
+    [
+      for k, v in var.task_sg_ingress_rules : "${lower(coalesce(v.ip_protocol, "tcp"))}:${coalesce(v.from_port, "")}:ipv4:${v.cidr_ipv4}"
+      if v.cidr_ipv4 != null && v.from_port != null
+    ],
+    [
+      for k, v in var.task_sg_ingress_rules : "${lower(coalesce(v.ip_protocol, "tcp"))}:${coalesce(v.from_port, "")}:ipv6:${v.cidr_ipv6}"
+      if v.cidr_ipv6 != null && v.from_port != null
+    ],
+  ))
+
+  service_port_rules = {
+    for k, items in local.service_port_rules_grouped : k => items[0]
+    if !contains(local.custom_ingress_port_keys, k)
+  }
 
   service_port_rule_services = {
     for k, items in local.service_port_rules_grouped : k => distinct([for r in items : r.service])

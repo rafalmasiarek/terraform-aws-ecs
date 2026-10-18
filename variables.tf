@@ -159,7 +159,7 @@ variable "task_sg_ingress_rules" {
     prefix_list_id               = optional(string)
     referenced_security_group_id = optional(string)
     self                         = optional(bool)
-    tags                         = optional(map(string))
+    tags                         = optional(map(string), {})
     to_port                      = optional(string)
   }))
   default = {}
@@ -177,7 +177,7 @@ variable "task_sg_egress_rules" {
     prefix_list_id               = optional(string)
     referenced_security_group_id = optional(string)
     self                         = optional(bool)
-    tags                         = optional(map(string))
+    tags                         = optional(map(string), {})
     to_port                      = optional(string)
   }))
   default = {}
@@ -187,6 +187,15 @@ variable "services" {
   description = "One ECS service + task definition per entry. See modules/service/variables.tf for the full per-entry shape - every field there is a key in this entry's object. container_definitions is typically built by calling this repo's modules/container-definition submodule once per container, outside this module. Root-level extras: open_task_ports = { source_cidr_ipv4, source_cidr_ipv6? } auto-opens the entry's container port mappings (bridge: hostPort, awsvpc/Fargate: containerPort) on the cluster's task SG, tagged with the service identity - opt-in per entry, omitted = no ingress rules."
   type        = any
   default     = {}
+
+  validation {
+    condition = alltrue([
+      for k, v in var.services : try(v.open_task_ports, null) == null ? true : (
+        try(v.open_task_ports.source_cidr_ipv4, null) != null || try(v.open_task_ports.source_cidr_ipv6, null) != null
+      )
+    ])
+    error_message = "services[<key>].open_task_ports is set but has neither source_cidr_ipv4 nor source_cidr_ipv6 - it would silently open no ingress rule."
+  }
 }
 
 variable "instance_role_permission_boundary_arn" {
