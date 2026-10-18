@@ -77,6 +77,10 @@ variable "log_configuration" {
   type = object({
     log_driver = string
     options    = optional(map(string), {})
+    secret_options = optional(list(object({
+      name       = string
+      value_from = string
+    })))
   })
   default = null
 }
@@ -116,6 +120,56 @@ variable "linux_parameters" {
     shared_memory_size   = optional(number)
   })
   default = null
+}
+
+variable "docker_labels" {
+  type    = map(string)
+  default = {}
+}
+
+variable "firelens_configuration" {
+  description = "FireLens log routing (e.g. splunk/syslog router container)."
+  type = object({
+    type    = string
+    options = map(string)
+  })
+  default = null
+
+  validation {
+    condition     = var.firelens_configuration == null ? true : contains(["fluentd", "fluentbit"], var.firelens_configuration.type)
+    error_message = "firelens_configuration.type must be \"fluentd\" or \"fluentbit\"."
+  }
+}
+
+variable "repository_credentials" {
+  description = "ARN of a Secrets Manager secret holding the private registry credentials for pulling this image (rendered as repositoryCredentials.credentialsParameter). The task execution role needs secretsmanager:GetSecretValue on it."
+  type        = string
+  default     = null
+}
+
+variable "ulimits" {
+  type = list(object({
+    name       = string
+    soft_limit = number
+    hard_limit = number
+  }))
+  default = []
+}
+
+variable "system_controls" {
+  type = list(object({
+    namespace = string
+    value     = string
+  }))
+  default = []
+}
+
+variable "resource_requirements" {
+  type = list(object({
+    type  = string
+    value = string
+  }))
+  default = []
 }
 
 variable "extra_fields" {

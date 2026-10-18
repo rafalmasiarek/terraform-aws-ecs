@@ -26,10 +26,25 @@ locals {
     }
   ]
 
-  log_configuration = var.log_configuration == null ? null : {
-    logDriver = var.log_configuration.log_driver
-    options   = var.log_configuration.options
+  log_configuration = var.log_configuration == null ? null : merge(
+    {
+      logDriver = var.log_configuration.log_driver
+      options   = var.log_configuration.options
+    },
+    var.log_configuration.secret_options == null ? {} : {
+      secretOptions = [for s in var.log_configuration.secret_options : { name = s.name, valueFrom = s.value_from }]
+    },
+  )
+
+  docker_labels = length(var.docker_labels) > 0 ? var.docker_labels : null
+  firelens = var.firelens_configuration == null ? null : {
+    type    = var.firelens_configuration.type
+    options = var.firelens_configuration.options
   }
+
+  ulimits_list               = [for u in var.ulimits : { name = u.name, softLimit = u.soft_limit, hardLimit = u.hard_limit }]
+  system_controls_list       = [for s in var.system_controls : { namespace = s.namespace, value = s.value }]
+  resource_requirements_list = [for r in var.resource_requirements : { type = r.type, value = r.value }]
 
   health_check = var.health_check == null ? null : {
     command     = var.health_check.command
@@ -64,6 +79,12 @@ locals {
     dependsOn              = length(local.depends_on_containers) > 0 ? local.depends_on_containers : null
     mountPoints            = length(local.mount_points) > 0 ? local.mount_points : null
     linuxParameters        = local.linux_parameters
+    dockerLabels           = local.docker_labels
+    firelensConfiguration  = local.firelens
+    repositoryCredentials  = var.repository_credentials == null ? null : { credentialsParameter = var.repository_credentials }
+    ulimits                = length(local.ulimits_list) > 0 ? local.ulimits_list : null
+    systemControls         = length(local.system_controls_list) > 0 ? local.system_controls_list : null
+    resourceRequirements   = length(local.resource_requirements_list) > 0 ? local.resource_requirements_list : null
   }
 
   container_definition_clean = { for k, v in local.container_definition : k => v if v != null }
