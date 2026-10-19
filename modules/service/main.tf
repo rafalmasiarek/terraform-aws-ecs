@@ -188,7 +188,194 @@ resource "aws_ecs_task_definition" "this" {
   tags = local.tagger_tags["task"]
 }
 
-resource "aws_ecs_service" "this" {
+# Split in two (ignore_changes only accepts a static list, not a condition
+# on autoscaling_enabled). See #2, #5.
+resource "aws_ecs_service" "managed" {
+  count = var.autoscaling_enabled ? 0 : 1
+
+  name            = var.name
+  cluster         = var.cluster_id
+  task_definition = aws_ecs_task_definition.this.arn
+  # coalesce: a REPLICA service with no explicit count keeps the historical
+  # default of 1 (the provider's own default is 0).
+  desired_count = local.daemon ? null : coalesce(var.desired_count, 1)
+
+  # AWS rejects launch_type on daemon services outright.
+  launch_type         = local.daemon || local.use_capacity_provider_strategy ? null : var.launch_type
+  scheduling_strategy = var.scheduling_strategy
+  propagate_tags      = var.propagate_tags
+
+  dynamic "capacity_provider_strategy" {
+    for_each = var.capacity_provider_strategy
+    content {
+      capacity_provider = capacity_provider_strategy.value.capacity_provider
+      weight            = capacity_provider_strategy.value.weight
+      base              = capacity_provider_strategy.value.base
+    }
+  }
+
+  deployment_maximum_percent         = local.daemon ? 100 : var.deployment_maximum_percent
+  deployment_minimum_healthy_percent = local.daemon ? 0 : var.deployment_minimum_healthy_percent
+  health_check_grace_period_seconds  = var.health_check_grace_period_seconds
+  enable_execute_command             = var.enable_execute_command
+  # Required for Cost Explorer/CUR allocation of runtime-created tasks and
+  # EBS volumes that Terraform itself doesn't manage.
+  enable_ecs_managed_tags = var.enable_ecs_managed_tags
+  wait_for_steady_state   = var.wait_for_steady_state
+  force_new_deployment    = var.force_new_deployment
+
+  dynamic "deployment_circuit_breaker" {
+    for_each = var.deployment_circuit_breaker == null ? [] : [var.deployment_circuit_breaker]
+    content {
+      enable   = deployment_circuit_breaker.value.enable
+      rollback = deployment_circuit_breaker.value.rollback
+    }
+  }
+
+  dynamic "deployment_controller" {
+    for_each = var.deployment_controller_type == null ? [] : [var.deployment_controller_type]
+    content {
+      type = deployment_controller.value
+    }
+  }
+
+  dynamic "service_connect_configuration" {
+    for_each = var.service_connect == null ? [] : [var.service_connect]
+    content {
+      enabled   = service_connect_configuration.value.enabled
+      namespace = service_connect_configuration.value.namespace
+
+      dynamic "service" {
+        for_each = service_connect_configuration.value.service
+        content {
+          discovery_name        = service.value.discovery_name
+          port_name             = try(service.value.port_name, null)
+          ingress_port_override = try(service.value.ingress_port_override, null)
+
+          dynamic "client_alias" {
+            for_each = service.value.client_alias
+            content {
+              dns_name = client_alias.value.dns_name
+              port     = client_alias.value.port
+            }
+          }
+        }
+      }
+    }
+  }
+
+  dynamic "volume_configuration" {
+    for_each = local.managed_ebs == null ? [] : [local.managed_ebs]
+    content {
+      name = volume_configuration.value.volume_name
+
+      managed_ebs_volume {
+        role_arn                   = volume_configuration.value.role_arn
+        encrypted                  = volume_configuration.value.encrypted
+        volume_type                = try(volume_configuration.value.volume_type, null)
+        size_in_gb                 = try(volume_configuration.value.size_in_gb, null)
+        iops                       = try(volume_configuration.value.iops, null)
+        throughput                 = try(volume_configuration.value.throughput, null)
+        snapshot_id                = try(volume_configuration.value.snapshot_id, null)
+        kms_key_id                 = try(volume_configuration.value.kms_key_id, null)
+        file_system_type           = try(volume_configuration.value.file_system_type, null)
+        volume_initialization_rate = try(volume_configuration.value.volume_initialization_rate, null)
+
+        dynamic "tag_specifications" {
+          for_each = try(volume_configuration.value.tag_specifications, [])
+          content {
+            resource_type  = tag_specifications.value.resource_type
+            tags           = try(tag_specifications.value.tags, null)
+            propagate_tags = try(tag_specifications.value.propagate_tags, null)
+          }
+        }
+      }
+    }
+  }
+
+  dynamic "network_configuration" {
+    for_each = var.network_mode == "awsvpc" ? [var.network_configuration] : []
+    content {
+      subnets          = network_configuration.value.subnets
+      security_groups  = network_configuration.value.security_groups
+      assign_public_ip = network_configuration.value.assign_public_ip
+    }
+  }
+
+  # AWS rejects load_balancer on daemon services outright.
+  dynamic "load_balancer" {
+    for_each = local.daemon ? [] : var.load_balancer
+    content {
+      target_group_arn = load_balancer.value.target_group_arn
+      container_name   = load_balancer.value.container_name
+      container_port   = load_balancer.value.container_port
+    }
+  }
+
+  dynamic "service_registries" {
+    for_each = var.service_registries
+    content {
+      registry_arn   = service_registries.value.registry_arn
+      port           = service_registries.value.port
+      container_name = service_registries.value.container_name
+      container_port = service_registries.value.container_port
+    }
+  }
+
+  dynamic "placement_constraints" {
+    for_each = var.placement_constraints
+    content {
+      type       = placement_constraints.value.type
+      expression = placement_constraints.value.expression
+    }
+  }
+
+  dynamic "ordered_placement_strategy" {
+    for_each = var.ordered_placement_strategy
+    content {
+      type  = ordered_placement_strategy.value.type
+      field = ordered_placement_strategy.value.field
+    }
+  }
+
+  # EBS volume configuration - the infrastructure role ARN is required for ECS
+  # to manage the volume lifecycle (create, attach, detach, delete). Without
+  # this, orphaned volumes are left behind when tasks stop.
+  dynamic "volume_configuration" {
+    for_each = [for v in var.volumes : v if try(v.configure_at_launch, false)]
+    content {
+      name = volume_configuration.value.name
+
+      dynamic "managed_ebs_volume" {
+        for_each = try(volume_configuration.value.ebs_volume_configuration, null) != null ? [volume_configuration.value.ebs_volume_configuration] : []
+        content {
+          role_arn         = coalesce(try(managed_ebs_volume.value.role_arn, null), var.infrastructure_role_arn)
+          size_in_gb       = try(managed_ebs_volume.value.size_in_gib, null)
+          snapshot_id      = try(managed_ebs_volume.value.snapshot_id, null)
+          encrypted        = try(managed_ebs_volume.value.encrypted, true)
+          kms_key_id       = try(managed_ebs_volume.value.kms_key_id, null)
+          iops             = try(managed_ebs_volume.value.iops, null)
+          throughput       = try(managed_ebs_volume.value.throughput, null)
+          file_system_type = try(managed_ebs_volume.value.file_system_type, null)
+          volume_type      = try(managed_ebs_volume.value.volume_type, null)
+
+          # Without this the ECS runtime creates the volume untagged, and it
+          # shows up as "unallocated" in Cost Explorer / CUR.
+          tag_specifications {
+            resource_type = "volume"
+            tags          = local.tagger_tags["ebs-${volume_configuration.value.name}"]
+          }
+        }
+      }
+    }
+  }
+
+  tags = local.tagger_tags["this"]
+}
+
+resource "aws_ecs_service" "autoscaled" {
+  count = var.autoscaling_enabled ? 1 : 0
+
   name            = var.name
   cluster         = var.cluster_id
   task_definition = aws_ecs_task_definition.this.arn
@@ -371,6 +558,10 @@ resource "aws_ecs_service" "this" {
   lifecycle {
     ignore_changes = [desired_count]
   }
+}
+
+locals {
+  ecs_service = var.autoscaling_enabled ? aws_ecs_service.autoscaled[0] : aws_ecs_service.managed[0]
 }
 
 data "aws_iam_policy_document" "ecs_tasks_assume" {
