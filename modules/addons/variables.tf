@@ -81,9 +81,9 @@ variable "cluster_addons" {
   # security_groups  = optional(list(string), [])
   # assign_public_ip = optional(bool, false)
   # # Declarative routes (EKS-Ingress analog): each entry becomes a
-  # # traefik router. `service` is the ECS service name that hosts the
-  # # backend - the ECS provider exposes it as a traefik service of the
-  # # same name (no load_balancer arg on that ECS service; label routing).
+  # # traefik router. `service` must be "service-<ecs-service-name>-<container-name>"
+  # # (the ECS provider's actual naming convention) - no load_balancer arg
+  # # needed on that ECS service; label routing.
   # routes = optional(list(object({
   # name        = string
   # rule        = string

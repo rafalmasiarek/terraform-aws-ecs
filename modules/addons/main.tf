@@ -248,7 +248,7 @@ locals {
         for r in coalesce(try(local.traefik_cfg.routes, null), []) : r.name => {
           rule        = r.rule
           entryPoints = coalesce(try(r.entrypoints, null), ["web"])
-          service     = r.service
+          service     = "${r.service}@ecs"
         }
       }
     }
@@ -305,10 +305,12 @@ locals {
   traefik_flags = concat(
     [
       "--providers.ecs=true",
+      "--providers.ecs.clusters=${var.cluster_name}",
       "--providers.ecs.exposedByDefault=${try(local.traefik_provider_cfg.exposed_by_default, false)}",
       "--providers.ecs.defaultRule=false",
       "--api.insecure=false",
       "--log.level=INFO",
+      "--entrypoints.web.address=:80",
     ],
     local.traefik_ep_443 ? [
       "--entrypoints.websecure.address=:443",
@@ -340,13 +342,13 @@ locals {
   # The image entrypoint execs the first argument (command must lead with
   # "traefik"), and Traefik 3.7+ treats a bare first argument as a subcommand,
   # so bootstrap through a shell that materializes the routes file first.
-  traefik_bootstrap = concat(
-    local.traefik_routes_count > 0 ? ["printf '%s' \"$TRAEFIK_ROUTES\" > /etc/traefik/dynamic/routes.yml &&"] : [],
+  traefik_bootstrap = join(" ", concat(
+    local.traefik_routes_count > 0 ? ["mkdir -p /etc/traefik/dynamic && printf '%s' \"$TRAEFIK_ROUTES\" > /etc/traefik/dynamic/routes.yml &&"] : [],
     ["exec /entrypoint.sh ${join(" ", local.traefik_flags)}"],
-  )
+  ))
 
   traefik_env_map = merge(
-    { TRAEFIK_ROUTES = local.traefik_routes_yaml },
+    local.traefik_routes_count > 0 ? {} : { TRAEFIK_ROUTES = local.traefik_routes_yaml },
     coalesce(try(local.traefik_cfg.environment, null), {}),
   )
 
@@ -363,7 +365,7 @@ locals {
       image            = local.addon_image.traefik
       essential        = true
       entryPoint       = ["/bin/sh", "-c"]
-      command          = local.traefik_bootstrap
+      command          = [local.traefik_bootstrap]
       environment      = [for k, v in local.traefik_env_map : { name = k, value = v } if v != null]
       portMappings     = local.traefik_port_mappings
       logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.traefik }
