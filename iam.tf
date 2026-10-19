@@ -9,9 +9,8 @@ locals {
     if try(ng.ecs_agent_config.registry_auth, null) != null
   ]
 
-  # try(): root sees caller-inferred password object types (node_groups is type = any),
-  # so a registry whose password object lacks this attribute is a static "unsupported
-  # attribute" error without it - mixed plaintext/secretsmanager sources per node group.
+  # try(): node_groups is type = any, so a registry password missing this
+  # attribute is a static error without it (mixed password sources per group).
   instance_role_registry_sm_arns = flatten([
     for ra in local.shared_profile_registry_auths : [
       for c in values(ra.registries) : try(c.password.secretsmanager_secret_arn, null)
@@ -29,9 +28,8 @@ locals {
   instance_role_sm_arns  = concat(var.instance_role_least_privilege.secretsmanager_secret_arns, local.instance_role_registry_sm_arns)
   instance_role_kms_arns = concat(var.instance_role_least_privilege.kms_key_arns, local.instance_role_registry_kms_arns)
 
-  # Plan-known length check: the rendered policy JSON is unknown while any
-  # scoped ARN comes from a resource created in the same apply, so the inline
-  # policy's count must be derived from the input structure, not the JSON.
+  # Derived from inputs, not the rendered JSON - the JSON is unknown whenever
+  # a scoped ARN comes from a resource created in this same apply.
   instance_role_least_privilege_arns = concat(
     var.instance_role_least_privilege.ecr_registry_arns,
     local.instance_role_sm_arns,
@@ -127,6 +125,28 @@ resource "aws_iam_role_policy" "instance_least_privilege" {
   policy = module.instance_least_privilege[0].json
 }
 
+# EC2 tasks write awslogs via the INSTANCE role (execution role covers
+# Fargate only); AmazonEC2ContainerServiceforEC2Role lacks the logs actions,
+# so awslogs tasks fail at validation without this.
+resource "aws_iam_role_policy" "instance_awslogs" {
+  count = var.create_instance_iam_role ? 1 : 0
+
+  name = "${var.name}-instance-awslogs"
+  role = aws_iam_role.instance[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogGroups", "logs:DescribeLogStreams", "logs:PutLogEvents"]
+      Resource = [
+        "arn:aws:logs:${data.aws_region.current[0].region}:${data.aws_caller_identity.current[0].account_id}:log-group:/aws/ecs/${var.name}*",
+        "arn:aws:logs:${data.aws_region.current[0].region}:${data.aws_caller_identity.current[0].account_id}:log-group:/aws/ecs/${var.name}*:log-stream:*",
+      ]
+    }]
+  })
+}
+
 resource "aws_iam_instance_profile" "instance" {
   count = var.create_instance_iam_role ? 1 : 0
 
@@ -205,8 +225,11 @@ resource "aws_iam_role_policy" "task_execution_least_privilege" {
   policy = module.task_execution_least_privilege[0].json
 }
 
+# Lets ECS manage EBS volumes attached via configure_at_launch (create,
+# attach, detach, delete) - without it, stopped tasks leave orphaned volumes.
+# Skipped when infrastructure_role_arn supplies an existing role.
 data "aws_iam_policy_document" "ecs_infrastructure_assume" {
-  count = var.create_ecs_infrastructure_role ? 1 : 0
+  count = var.create_ecs_infrastructure_role && var.infrastructure_role_arn == null ? 1 : 0
 
   statement {
     actions = ["sts:AssumeRole"]
@@ -218,7 +241,7 @@ data "aws_iam_policy_document" "ecs_infrastructure_assume" {
 }
 
 resource "aws_iam_role" "ecs_infrastructure" {
-  count = var.create_ecs_infrastructure_role ? 1 : 0
+  count = var.create_ecs_infrastructure_role && var.infrastructure_role_arn == null ? 1 : 0
 
   name               = "${var.name}-ecs-infrastructure"
   assume_role_policy = data.aws_iam_policy_document.ecs_infrastructure_assume[0].json
@@ -227,10 +250,14 @@ resource "aws_iam_role" "ecs_infrastructure" {
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_infrastructure" {
-  count = var.create_ecs_infrastructure_role ? 1 : 0
+  count = var.create_ecs_infrastructure_role && var.infrastructure_role_arn == null ? 1 : 0
 
   role       = aws_iam_role.ecs_infrastructure[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRolePolicyForVolumes"
+}
+
+locals {
+  ecs_infrastructure_role_arn = var.infrastructure_role_arn != null ? var.infrastructure_role_arn : try(aws_iam_role.ecs_infrastructure[0].arn, null)
 }
 
 check "node_group_registry_auth_coverage" {
