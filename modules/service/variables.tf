@@ -229,6 +229,11 @@ variable "network_configuration" {
     assign_public_ip = optional(bool, false)
   })
   default = null
+
+  validation {
+    condition     = var.network_mode != "awsvpc" || var.network_configuration != null
+    error_message = "network_configuration is required when network_mode = \"awsvpc\" (the default) - without it the task has no subnets to launch into."
+  }
 }
 
 variable "service_registries" {

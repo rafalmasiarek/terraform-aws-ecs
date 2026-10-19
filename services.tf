@@ -3,6 +3,10 @@ module "service" {
 
   for_each = var.services
 
+  # A service using an EC2 capacity-provider strategy can otherwise reach AWS
+  # before the provider is associated with the cluster and fail creation.
+  depends_on = [aws_ecs_cluster_capacity_providers.this]
+
   cluster_id   = aws_ecs_cluster.this.id
   cluster_name = aws_ecs_cluster.this.name
   name         = "${var.name}-${each.key}"
@@ -50,7 +54,10 @@ module "service" {
 
   load_balancer = try(each.value.load_balancer, [])
 
-  network_configuration = try(each.value.network_mode, "awsvpc") == "awsvpc" ? {
+  # Falls through to null (not a half-built object) when the caller omits
+  # network_configuration entirely - modules/service's own validation then
+  # reports a clear error instead of a low-level "attribute not found" here.
+  network_configuration = try(each.value.network_mode, "awsvpc") == "awsvpc" && try(each.value.network_configuration, null) != null ? {
     subnets = each.value.network_configuration.subnets
     security_groups = concat(
       [aws_security_group.this.id],
