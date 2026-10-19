@@ -30,9 +30,27 @@ variable "network_mode" {
   default = "awsvpc"
 }
 
+variable "cluster_security_group_id" {
+  description = "The cluster's task security group. When set, the module auto-discovers every container port from container_definitions and opens an ingress rule on this SG (source: the SG itself) so the service is reachable from other cluster tasks/load balancers without manual SG wiring."
+  type        = string
+  default     = null
+}
+
+variable "auto_ingress_enabled" {
+  description = "Explicitly enable/disable the auto-ingress wiring, decoupled from cluster_security_group_id's own value. On a fresh cluster the caller typically passes the SG's id straight from the resource (e.g. aws_security_group.this.id) before it's created - that value is unknown at plan time, and a `for_each` cannot be gated on `cluster_security_group_id != null` when the id itself is unknown (Terraform cannot determine the for_each key set). Callers that always want this feature should pass a literal true/false here instead of relying on cluster_security_group_id's nullness. Null falls back to the (unknown-unsafe) nullness check for backward compatibility with callers that pass an already-known id or omit the argument entirely."
+  type        = bool
+  default     = null
+}
+
 variable "requires_compatibilities" {
-  type    = list(string)
-  default = ["FARGATE"]
+  description = "Launch types the task definition is compatible with. Must match launch_type or capacity_provider_strategy. Defaults to [\"FARGATE\"] but should be set explicitly when using EC2."
+  type        = list(string)
+  default     = ["FARGATE"]
+
+  validation {
+    condition     = alltrue([for c in var.requires_compatibilities : contains(["EC2", "FARGATE", "EXTERNAL", "MANAGED_INSTANCES"], c)])
+    error_message = "requires_compatibilities may only contain \"EC2\", \"FARGATE\", \"EXTERNAL\", and/or \"MANAGED_INSTANCES\"."
+  }
 }
 
 variable "task_role_arn" {
@@ -52,8 +70,9 @@ variable "default_execution_role_arn" {
 }
 
 variable "volumes" {
-  type    = any
-  default = []
+  description = "List of volume configurations. Each entry: { name, host_path?, configure_at_launch?, efs_volume_configuration?, ebs_volume_configuration? }. EBS volumes require infrastructure_role_arn (or the cluster's default) for ECS to manage the volume lifecycle."
+  type        = any
+  default     = []
 
   validation {
     condition = can(element([for _ in [1] : 1 if length([
@@ -62,6 +81,12 @@ variable "volumes" {
     ]) <= 1], 0))
     error_message = "At most one volume may set configure_at_launch = true (ECS managed EBS limit: one configured-at-launch volume per task definition)."
   }
+}
+
+variable "infrastructure_role_arn" {
+  description = "ARN of the ECS infrastructure role for EBS task volume management. Falls back to the cluster's default when null."
+  type        = string
+  default     = null
 }
 
 variable "desired_count" {
@@ -112,8 +137,9 @@ variable "deployment_controller_type" {
 }
 
 variable "enable_ecs_managed_tags" {
-  type    = bool
-  default = false
+  description = "Enable ECS-managed tags: ECS auto-tags launched tasks and attached EBS volumes with cluster/service identity plus user-added task-definition/service tags. Required for cost allocation of runtime-created resources in Cost Explorer / CUR."
+  type        = bool
+  default     = false
 }
 
 variable "propagate_tags" {

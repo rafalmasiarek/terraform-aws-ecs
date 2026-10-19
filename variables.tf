@@ -278,7 +278,30 @@ variable "task_execution_role_least_privilege" {
 }
 
 variable "create_ecs_infrastructure_role" {
-  description = "Create the ECS infrastructure role (AmazonECSInfrastructureRolePolicyForVolumes) - the default role_arn for services' managed_ebs_volume entries."
+  description = "Create the ECS infrastructure role (AmazonECSInfrastructureRolePolicyForVolumes) - the default role_arn for services' managed_ebs_volume entries. Ignored when infrastructure_role_arn is set."
   type        = bool
   default     = false
+}
+
+variable "infrastructure_role_arn" {
+  description = "ARN of an existing ECS infrastructure role to use for EBS task volumes instead of creating one. When set, create_ecs_infrastructure_role is ignored."
+  type        = string
+  default     = null
+}
+
+variable "cluster_addons" {
+  description = "ECS cluster infrastructure add-ons: traefik, opentelemetry, cloudwatch_agent, fluent_bit, node_exporter, cadvisor, falco, blackbox_exporter. Omit (null) to disable all. See docs/addons.md and modules/addons/variables.tf for the full schema and per-preset semantics."
+  type        = any
+  default     = null
+
+  # Unknown top-level keys are rejected here; unknown per-preset attributes
+  # fail the plan at the first HCL attribute access inside the module.
+  validation {
+    condition = var.cluster_addons == null ? true : alltrue([
+      for k in keys(var.cluster_addons) : contains(
+        ["traefik", "opentelemetry", "cloudwatch_agent", "fluent_bit",
+      "node_exporter", "cadvisor", "falco", "blackbox_exporter", "observability"], k)
+    ])
+    error_message = "cluster_addons: unknown preset. Valid keys: traefik, opentelemetry, cloudwatch_agent, fluent_bit, node_exporter, cadvisor, falco, blackbox_exporter, observability."
+  }
 }

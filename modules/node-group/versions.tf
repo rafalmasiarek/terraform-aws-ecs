@@ -6,5 +6,9 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 6.0"
     }
+    tagger = {
+      source  = "registry.terraform.io/rafalmasiarek/tagger"
+      version = ">= 0.1.0"
+    }
   }
 }

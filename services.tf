@@ -1,3 +1,21 @@
+locals {
+  services_has_ec2_capacity     = length(var.node_groups) > 0
+  services_has_fargate_capacity = length(var.fargate_capacity_providers) > 0
+  services_is_mixed             = local.services_has_ec2_capacity && local.services_has_fargate_capacity
+
+  # FARGATE always. launch_type is ForceNew; auto-flipping to EC2 on node_groups
+  # presence would destroy/recreate services. Override per-service for EC2.
+  services_default_launch_type = "FARGATE"
+
+  # Used only when capacity_provider_strategy is set (both compatibilities,
+  # scheduler picks per task) - the plain-launch_type default below instead
+  # matches the resolved launch_type 1:1, as AWS requires.
+  services_default_requires_compatibilities = concat(
+    local.services_has_ec2_capacity ? ["EC2"] : [],
+    local.services_has_fargate_capacity ? ["FARGATE"] : [],
+  )
+}
+
 module "service" {
   source = "./modules/service"
 
@@ -7,20 +25,31 @@ module "service" {
   cluster_name = aws_ecs_cluster.this.name
   name         = "${var.name}-${each.key}"
 
+  # Pass a literal true, not a derived check against cluster_security_group_id
+  # (unknown on a fresh apply) - see auto_ingress_enabled in
+  # modules/service/variables.tf.
+  cluster_security_group_id = aws_security_group.this.id
+  auto_ingress_enabled      = true
+
   container_definitions = each.value.container_definitions
 
-  task_cpu                   = try(each.value.task_cpu, null)
-  task_memory                = try(each.value.task_memory, null)
-  network_mode               = try(each.value.network_mode, "awsvpc")
-  requires_compatibilities   = try(each.value.requires_compatibilities, ["FARGATE"])
+  task_cpu     = try(each.value.task_cpu, null)
+  task_memory  = try(each.value.task_memory, null)
+  network_mode = try(each.value.network_mode, "awsvpc")
+  requires_compatibilities = try(each.value.requires_compatibilities, length(try(each.value.capacity_provider_strategy, [])) > 0 ? (
+    local.services_default_requires_compatibilities
+    ) : (
+    [try(each.value.launch_type, local.services_default_launch_type)]
+  ))
   task_role_arn              = try(each.value.task_role_arn, null)
   execution_role_arn         = try(each.value.execution_role_arn, null)
   default_execution_role_arn = var.create_task_execution_role ? aws_iam_role.task_execution[0].arn : null
   volumes                    = try(each.value.volumes, [])
+  infrastructure_role_arn    = local.ecs_infrastructure_role_arn
 
   scheduling_strategy        = try(each.value.scheduling_strategy, "REPLICA")
   desired_count              = try(each.value.desired_count, try(each.value.scheduling_strategy, "REPLICA") == "DAEMON" ? null : 1)
-  launch_type                = try(each.value.launch_type, "FARGATE")
+  launch_type                = try(each.value.launch_type, local.services_default_launch_type)
   capacity_provider_strategy = try(each.value.capacity_provider_strategy, [])
 
   deployment_circuit_breaker = try(each.value.deployment_circuit_breaker, null)
@@ -36,7 +65,7 @@ module "service" {
   enable_fault_injection              = try(each.value.enable_fault_injection, false)
   proxy_configuration                 = try(each.value.proxy_configuration, null)
   managed_ebs_volume                  = try(each.value.managed_ebs_volume, null)
-  default_ecs_infrastructure_role_arn = var.create_ecs_infrastructure_role ? try(aws_iam_role.ecs_infrastructure[0].arn, null) : null
+  default_ecs_infrastructure_role_arn = local.ecs_infrastructure_role_arn
 
   task_execution_role = try(each.value.task_execution_role, null)
   task_role           = try(each.value.task_role, null)
@@ -78,4 +107,5 @@ module "service" {
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context
   tags           = var.tags
+  origin_module  = "service"
 }
