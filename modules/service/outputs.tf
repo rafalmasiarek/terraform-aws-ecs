@@ -1,9 +1,9 @@
 output "service_name" {
-  value = aws_ecs_service.this.name
+  value = local.ecs_service.name
 }
 
 output "service_id" {
-  value = aws_ecs_service.this.id
+  value = local.ecs_service.id
 }
 
 output "task_definition_arn" {
