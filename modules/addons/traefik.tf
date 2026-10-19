@@ -132,6 +132,8 @@ resource "aws_lb_listener" "traefik" {
       target_group_arn = aws_lb_target_group.traefik[coalesce(each.value.container_port, each.value.port)].arn
     }
   }
+
+  tags = local.tagger_tags["traefik-listener-${each.value.port}"]
 }
 
 # SG rules: one per distinct container port (the internal ports the LB reaches).
