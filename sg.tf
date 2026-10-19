@@ -90,6 +90,7 @@ locals {
     for e in local.service_port_rule_entries : [
       try(e.source.source_cidr_ipv4, null) == null ? [] : [merge(e, { key = "${e.protocol}:${e.port}:ipv4:${e.source.source_cidr_ipv4}", cidr_type = "ipv4", cidr = e.source.source_cidr_ipv4 })],
       try(e.source.source_cidr_ipv6, null) == null ? [] : [merge(e, { key = "${e.protocol}:${e.port}:ipv6:${e.source.source_cidr_ipv6}", cidr_type = "ipv6", cidr = e.source.source_cidr_ipv6 })],
+      try(e.source.source_security_group_id, null) == null ? [] : [merge(e, { key = "${e.protocol}:${e.port}:sg:${e.source.source_security_group_id}", cidr_type = "sg", cidr = e.source.source_security_group_id })],
     ]
   ])
 
@@ -113,6 +114,12 @@ locals {
       for k, v in var.task_sg_ingress_rules : "${lower(coalesce(v.ip_protocol, "tcp"))}:${coalesce(v.from_port, "")}:ipv6:${v.cidr_ipv6}"
       if v.cidr_ipv6 != null && v.from_port != null
     ],
+    # self = true (the cluster's own SG) is intentionally excluded here - it
+    # is never a candidate match for an external ALB/NLB source_security_group_id.
+    [
+      for k, v in var.task_sg_ingress_rules : "${lower(coalesce(v.ip_protocol, "tcp"))}:${coalesce(v.from_port, "")}:sg:${v.referenced_security_group_id}"
+      if v.referenced_security_group_id != null && v.from_port != null
+    ],
   ))
 
   service_port_rules = {
@@ -128,13 +135,14 @@ locals {
 resource "aws_vpc_security_group_ingress_rule" "service_ports" {
   for_each = local.service_port_rules
 
-  cidr_ipv4         = each.value.cidr_type == "ipv4" ? each.value.cidr : null
-  cidr_ipv6         = each.value.cidr_type == "ipv6" ? each.value.cidr : null
-  description       = "auto-opened for ${length(local.service_port_rule_services[each.key]) == 1 ? "service " : "services "}${var.name}/${join(",", local.service_port_rule_services[each.key])}"
-  from_port         = each.value.port
-  to_port           = each.value.port
-  ip_protocol       = each.value.protocol
-  security_group_id = aws_security_group.this.id
+  cidr_ipv4                    = each.value.cidr_type == "ipv4" ? each.value.cidr : null
+  cidr_ipv6                    = each.value.cidr_type == "ipv6" ? each.value.cidr : null
+  referenced_security_group_id = each.value.cidr_type == "sg" ? each.value.cidr : null
+  description                  = "auto-opened for ${length(local.service_port_rule_services[each.key]) == 1 ? "service " : "services "}${var.name}/${join(",", local.service_port_rule_services[each.key])}"
+  from_port                    = each.value.port
+  to_port                      = each.value.port
+  ip_protocol                  = each.value.protocol
+  security_group_id            = aws_security_group.this.id
   tags = merge(
     local.tagger_tags["this"],
     { "Name" = "${var.name}/${join(",", local.service_port_rule_services[each.key])}" },
