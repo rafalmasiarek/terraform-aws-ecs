@@ -200,6 +200,8 @@ resource "aws_ecs_capacity_provider" "ec2" {
       instance_warmup_period    = try(each.value.managed_scaling.instance_warmup_period, 300)
     }
   }
+
+  tags = local.tagger_tags["this"]
 }
 
 resource "aws_ecs_cluster_capacity_providers" "this" {

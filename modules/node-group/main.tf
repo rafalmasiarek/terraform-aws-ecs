@@ -223,7 +223,7 @@ module "instance_role" {
     kms_key_arns               = concat(var.iam.create.least_privilege.kms_key_arns, local.registry_auth_kms_arns)
     route53_hosted_zone_arns   = var.iam.create.least_privilege.route53_hosted_zone_arns
   }
-  tags = var.tags
+  tags = local.tagger_tags["this"]
 }
 
 resource "aws_iam_instance_profile" "instance" {
