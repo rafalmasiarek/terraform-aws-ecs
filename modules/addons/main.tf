@@ -111,6 +111,13 @@ locals {
       created_at = null
       extra_tags = {}
     } },
+    { for name in local.addon_enabled.traefik && local.traefik_create_lb ? keys(local.traefik_listeners) : [] : "traefik-listener-${name}" => {
+      name       = "${var.cluster_name}-addon-traefik-${name}"
+      service    = { load_balancer = { type = local.traefik_nlb ? "network" : "application" } }
+      attributes = ["addon", "traefik", "listener", name]
+      created_at = null
+      extra_tags = {}
+    } },
     local.addon_enabled.traefik && local.traefik_routes_count > 0 ? {
       traefik-routes = {
         name       = "/ecs/${var.cluster_name}/addon-traefik-routes"

@@ -196,7 +196,8 @@ resource "aws_ecs_service" "this" {
   # default of 1 (the provider's own default is 0).
   desired_count = local.daemon ? null : coalesce(var.desired_count, 1)
 
-  launch_type         = local.use_capacity_provider_strategy ? null : var.launch_type
+  # AWS rejects launch_type on daemon services outright.
+  launch_type         = local.daemon || local.use_capacity_provider_strategy ? null : var.launch_type
   scheduling_strategy = var.scheduling_strategy
   propagate_tags      = var.propagate_tags
 
@@ -297,8 +298,9 @@ resource "aws_ecs_service" "this" {
     }
   }
 
+  # AWS rejects load_balancer on daemon services outright.
   dynamic "load_balancer" {
-    for_each = var.load_balancer
+    for_each = local.daemon ? [] : var.load_balancer
     content {
       target_group_arn = load_balancer.value.target_group_arn
       container_name   = load_balancer.value.container_name

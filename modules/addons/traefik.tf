@@ -133,7 +133,7 @@ resource "aws_lb_listener" "traefik" {
     }
   }
 
-  tags = local.tagger_tags["traefik-listener-${each.value.port}"]
+  tags = local.tagger_tags["traefik-listener-${each.key}"]
 }
 
 # SG rules: one per distinct container port (the internal ports the LB reaches).
