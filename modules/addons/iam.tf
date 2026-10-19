@@ -29,7 +29,6 @@ locals {
     traefik           = []
     opentelemetry     = []
     cloudwatch_agent  = []
-    fluent_bit        = []
     node_exporter     = []
     cadvisor          = []
     falco             = []
@@ -53,13 +52,6 @@ locals {
         effect    = "Allow"
         actions   = ["cloudwatch:PutMetricData"]
         resources = ["*"]
-      }]
-    }
-    fluent_bit = {
-      logs = [{
-        effect    = "Allow"
-        actions   = ["logs:PutLogEvents", "logs:CreateLogStream", "logs:DescribeLogStreams"]
-        resources = ["arn:aws:logs:*:*:log-group:/aws/ecs/${var.cluster_name}/addons/*:*"]
       }]
     }
     opentelemetry = {
@@ -240,8 +232,6 @@ locals {
   otel_execution_role_arn     = local.addon_enabled.opentelemetry ? aws_iam_role.execution["opentelemetry"].arn : null
   cwa_task_role_arn           = local.addon_enabled.cloudwatch_agent ? aws_iam_role.task["cloudwatch_agent"].arn : null
   cwa_execution_role_arn      = local.addon_enabled.cloudwatch_agent ? aws_iam_role.execution["cloudwatch_agent"].arn : null
-  fb_task_role_arn            = local.addon_enabled.fluent_bit ? aws_iam_role.task["fluent_bit"].arn : null
-  fb_execution_role_arn       = local.addon_enabled.fluent_bit ? aws_iam_role.execution["fluent_bit"].arn : null
   ne_task_role_arn            = local.addon_enabled.node_exporter ? aws_iam_role.task["node_exporter"].arn : null
   ne_execution_role_arn       = local.addon_enabled.node_exporter ? aws_iam_role.execution["node_exporter"].arn : null
   cadvisor_task_role_arn      = local.addon_enabled.cadvisor ? aws_iam_role.task["cadvisor"].arn : null

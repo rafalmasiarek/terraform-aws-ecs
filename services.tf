@@ -14,6 +14,27 @@ locals {
     local.services_has_ec2_capacity ? ["EC2"] : [],
     local.services_has_fargate_capacity ? ["FARGATE"] : [],
   )
+
+  # containerPort = null -> stable hash-derived port in this range, instead
+  # of callers all guessing the same number. Hash, not `random` provider:
+  # the SG rules below key for_each on the port, which must be known at plan.
+  services_random_port_min = 20000
+  services_random_port_max = 60000
+
+  services_container_definitions = {
+    for sk, sv in var.services : sk => [
+      for ci, c in try(sv.container_definitions, []) : merge(c, {
+        portMappings = [
+          for pi, pm in try(c.portMappings, []) : merge(pm, {
+            containerPort = coalesce(try(pm.containerPort, null), (
+              parseint(substr(md5("${sk}::${ci}::${pi}"), 0, 8), 16) %
+              (local.services_random_port_max - local.services_random_port_min)
+            ) + local.services_random_port_min)
+          })
+        ]
+      })
+    ]
+  }
 }
 
 module "service" {
@@ -35,7 +56,7 @@ module "service" {
   cluster_security_group_id = aws_security_group.this.id
   auto_ingress_enabled      = true
 
-  container_definitions = each.value.container_definitions
+  container_definitions = local.services_container_definitions[each.key]
 
   task_cpu     = try(each.value.task_cpu, null)
   task_memory  = try(each.value.task_memory, null)
@@ -58,8 +79,8 @@ module "service" {
 
   deployment_circuit_breaker = try(each.value.deployment_circuit_breaker, null)
   deployment_controller_type = try(each.value.deployment_controller_type, null)
-  enable_ecs_managed_tags    = try(each.value.enable_ecs_managed_tags, false)
-  propagate_tags             = try(each.value.propagate_tags, null)
+  enable_ecs_managed_tags    = try(each.value.enable_ecs_managed_tags, var.use_tagger)
+  propagate_tags             = try(each.value.propagate_tags, var.use_tagger ? "SERVICE" : null)
   service_connect            = try(each.value.service_connect, null)
 
   runtime_platform                    = try(each.value.runtime_platform, null)

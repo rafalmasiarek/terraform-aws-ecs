@@ -39,7 +39,7 @@ variable "infrastructure_role_arn" {
 }
 
 variable "cluster_addons" {
-  description = "ECS cluster infrastructure add-ons: traefik, opentelemetry, cloudwatch_agent, fluent_bit, node_exporter, cadvisor, falco, blackbox_exporter. See docs/addons.md for per-preset semantics."
+  description = "ECS cluster infrastructure add-ons: traefik, opentelemetry, cloudwatch_agent, node_exporter, cadvisor, falco, blackbox_exporter. See docs/addons.md for per-preset semantics."
   type        = any
   default     = null
 
@@ -79,7 +79,7 @@ variable "cluster_addons" {
   # # awsvpc tasks: defaults to every available subnet of the VPC.
   # subnets          = optional(list(string), [])
   # security_groups  = optional(list(string), [])
-  # assign_public_ip = optional(bool, false)
+  # assign_public_ip = optional(bool)  # default: true only if subnets have no NAT egress
   # # Declarative routes (EKS-Ingress analog): each entry becomes a
   # # traefik router. `service` must be "service-<ecs-service-name>-<container-name>"
   # # (the ECS provider's actual naming convention) - no load_balancer arg
@@ -177,7 +177,7 @@ variable "cluster_addons" {
   # })), [])
   # subnets          = optional(list(string), [])
   # security_groups  = optional(list(string), [])
-  # assign_public_ip = optional(bool, false)
+  # assign_public_ip = optional(bool)  # default: true only if subnets have no NAT egress
   # environment      = optional(map(string), {})
   # docker_labels    = optional(map(string), {})
   # command          = optional(list(string))
@@ -218,31 +218,7 @@ variable "cluster_addons" {
   # task_cpu         = optional(number, 256)
   # task_memory      = optional(number, 512)
   # config           = optional(string)  # agent JSON; null = USE_DEFAULT_CONFIG
-  # assign_public_ip = optional(bool, false)
-  # environment      = optional(map(string), {})
-  # docker_labels    = optional(map(string), {})
-  # command          = optional(list(string))
-  # extra_args       = optional(list(string), [])
-  # extra_task_policies = optional(object({
-  # managed_policy_arns = optional(list(string), [])
-  # inline_policies = optional(map(list(object({
-  # sid       = optional(string)
-  # effect    = string
-  # actions   = list(string)
-  # resources = list(string)
-  # }))), {})
-  # }), {})
-  # tags = optional(map(string), {})
-  # }))
-  #
-  # fluent_bit = optional(object({
-  # enabled          = optional(bool, true)
-  # image            = optional(string)
-  # task_cpu         = optional(number, 256)
-  # task_memory      = optional(number, 512)
-  # config           = optional(string)  # fluent-bit conf; null = generated
-  # config_override  = optional(string)
-  # assign_public_ip = optional(bool, false)
+  # assign_public_ip = optional(bool)  # default: true only if subnets have no NAT egress
   # environment      = optional(map(string), {})
   # docker_labels    = optional(map(string), {})
   # command          = optional(list(string))
@@ -333,7 +309,7 @@ variable "cluster_addons" {
   # port             = optional(number, 9115)
   # config           = optional(string)  # blackbox YAML; null = generated
   # config_override  = optional(string)
-  # assign_public_ip = optional(bool, false)
+  # assign_public_ip = optional(bool)  # default: true only if subnets have no NAT egress
   # environment      = optional(map(string), {})
   # docker_labels    = optional(map(string), {})
   # command          = optional(list(string))

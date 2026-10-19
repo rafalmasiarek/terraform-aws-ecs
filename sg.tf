@@ -75,7 +75,7 @@ resource "aws_vpc_security_group_ingress_rule" "custom" {
 locals {
   service_port_rule_entries = flatten([
     for k, v in var.services : try(v.open_task_ports, null) == null ? [] : [
-      for cd in try(v.container_definitions, []) : [
+      for cd in local.services_container_definitions[k] : [
         for pm in try(cd.portMappings, []) : {
           service  = k
           port     = try(v.network_mode, "awsvpc") == "bridge" ? try(pm.hostPort, 0) : try(pm.containerPort, 0)

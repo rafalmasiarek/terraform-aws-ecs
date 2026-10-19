@@ -40,8 +40,11 @@ module "traefik_service" {
   network_configuration = local.traefik_daemon ? null : {
     subnets          = local.traefik_subnets
     security_groups  = concat([var.cluster_security_group_id], coalesce(try(local.traefik_cfg.security_groups, null), []))
-    assign_public_ip = try(local.traefik_cfg.assign_public_ip, false)
+    assign_public_ip = try(local.traefik_cfg.assign_public_ip, local.addon_assign_public_ip_default)
   }
+
+  enable_ecs_managed_tags = var.use_tagger
+  propagate_tags          = var.use_tagger ? "SERVICE" : null
 
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context
@@ -84,8 +87,11 @@ module "opentelemetry_service" {
   network_configuration = {
     subnets          = length(coalesce(try(local.otel_cfg.subnets, null), [])) > 0 ? local.otel_cfg.subnets : [for s in data.aws_subnets.vpc[0].ids : s]
     security_groups  = concat([var.cluster_security_group_id], coalesce(try(local.otel_cfg.security_groups, null), []))
-    assign_public_ip = try(local.otel_cfg.assign_public_ip, false)
+    assign_public_ip = try(local.otel_cfg.assign_public_ip, local.addon_assign_public_ip_default)
   }
+
+  enable_ecs_managed_tags = var.use_tagger
+  propagate_tags          = var.use_tagger ? "SERVICE" : null
 
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context
@@ -100,7 +106,7 @@ module "cloudwatch_agent_service" {
   cluster_name = var.cluster_name
   name         = "${var.cluster_name}-addon-cloudwatch-agent"
 
-  container_definitions = [local.cwa_container]
+  container_definitions = [local.cwa_config_init_container, local.cwa_container]
 
   # Fargate has no 128-CPU tier at all (256 is the minimum); these defaults
   # must stay valid for both launch types.
@@ -114,7 +120,7 @@ module "cloudwatch_agent_service" {
   execution_role_arn         = local.cwa_execution_role_arn
   default_execution_role_arn = var.default_execution_role_arn
   infrastructure_role_arn    = var.infrastructure_role_arn
-  volumes                    = coalesce(try(local.cwa_cfg.volumes, null), [])
+  volumes                    = concat([{ name = local.cwa_config_volume_name }], coalesce(try(local.cwa_cfg.volumes, null), []))
 
   desired_count              = 1
   launch_type                = local.addon_default_launch
@@ -128,56 +134,15 @@ module "cloudwatch_agent_service" {
   network_configuration = {
     subnets          = [for s in data.aws_subnets.vpc[0].ids : s]
     security_groups  = [var.cluster_security_group_id]
-    assign_public_ip = try(local.cwa_cfg.assign_public_ip, false)
+    assign_public_ip = try(local.cwa_cfg.assign_public_ip, local.addon_assign_public_ip_default)
   }
+
+  enable_ecs_managed_tags = var.use_tagger
+  propagate_tags          = var.use_tagger ? "SERVICE" : null
 
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context
   tags           = merge(var.tags, coalesce(try(local.cwa_cfg.tags, null), {}))
-}
-
-module "fluent_bit_service" {
-  source = "../service"
-  count  = local.addon_enabled.fluent_bit ? 1 : 0
-
-  cluster_id   = var.cluster_id
-  cluster_name = var.cluster_name
-  name         = "${var.cluster_name}-addon-fluent-bit"
-
-  container_definitions = [local.fluentbit_container]
-
-  # 256 CPU's lowest valid Fargate memory tier is 512 MB; these defaults
-  # must stay valid for both launch types.
-  task_cpu    = try(local.fb_cfg.task_cpu, 256)
-  task_memory = try(local.fb_cfg.task_memory, 512)
-
-  network_mode             = "awsvpc"
-  requires_compatibilities = local.addon_default_compat
-
-  task_role_arn              = local.fb_task_role_arn
-  execution_role_arn         = local.fb_execution_role_arn
-  default_execution_role_arn = var.default_execution_role_arn
-  infrastructure_role_arn    = var.infrastructure_role_arn
-  volumes                    = coalesce(try(local.fb_cfg.volumes, null), [])
-
-  desired_count              = 1
-  launch_type                = local.addon_default_launch
-  capacity_provider_strategy = []
-
-  deployment_maximum_percent         = 200
-  deployment_minimum_healthy_percent = 100
-  enable_execute_command             = true
-  wait_for_steady_state              = false
-
-  network_configuration = {
-    subnets          = [for s in data.aws_subnets.vpc[0].ids : s]
-    security_groups  = [var.cluster_security_group_id]
-    assign_public_ip = try(local.fb_cfg.assign_public_ip, false)
-  }
-
-  use_tagger     = var.use_tagger
-  tagger_context = var.tagger_context
-  tags           = merge(var.tags, coalesce(try(local.fb_cfg.tags, null), {}))
 }
 
 # EC2 daemon-style agents: one task per node, bridge networking, host ports.
@@ -212,6 +177,9 @@ module "node_exporter_service" {
   deployment_minimum_healthy_percent = 100
   enable_execute_command             = true
   wait_for_steady_state              = false
+
+  enable_ecs_managed_tags = var.use_tagger
+  propagate_tags          = var.use_tagger ? "SERVICE" : null
 
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context
@@ -250,6 +218,9 @@ module "cadvisor_service" {
   enable_execute_command             = true
   wait_for_steady_state              = false
 
+  enable_ecs_managed_tags = var.use_tagger
+  propagate_tags          = var.use_tagger ? "SERVICE" : null
+
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context
   tags           = merge(var.tags, coalesce(try(local.cadvisor_cfg.tags, null), {}))
@@ -286,6 +257,9 @@ module "falco_service" {
   deployment_minimum_healthy_percent = 100
   enable_execute_command             = true
   wait_for_steady_state              = false
+
+  enable_ecs_managed_tags = var.use_tagger
+  propagate_tags          = var.use_tagger ? "SERVICE" : null
 
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context
@@ -328,8 +302,11 @@ module "blackbox_exporter_service" {
   network_configuration = {
     subnets          = [for s in data.aws_subnets.vpc[0].ids : s]
     security_groups  = [var.cluster_security_group_id]
-    assign_public_ip = try(local.bb_cfg.assign_public_ip, false)
+    assign_public_ip = try(local.bb_cfg.assign_public_ip, local.addon_assign_public_ip_default)
   }
+
+  enable_ecs_managed_tags = var.use_tagger
+  propagate_tags          = var.use_tagger ? "SERVICE" : null
 
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context

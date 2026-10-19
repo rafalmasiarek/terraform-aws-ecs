@@ -11,7 +11,7 @@ locals {
   addon_has_fargate = try(var.plan_facts.has_fargate_capacity, false)
   addon_is_mixed    = try(var.plan_facts.is_mixed, false)
 
-  # Default for awsvpc addons (otel, cwa, fluent_bit, blackbox):
+  # Default for awsvpc addons (otel, cwa, blackbox):
   # mixed -> both, pure-EC2 -> EC2, pure-Fargate -> FARGATE.
   addon_default_launch = local.addon_has_ec2 && !local.addon_has_fargate ? "EC2" : "FARGATE"
 
@@ -32,7 +32,7 @@ locals {
   # Per-preset enabled flags, defaulting to true when the block is present.
   # Every known preset key is always present (defaulting to false when the
   # block is absent) so attribute access never fails on a partial map.
-  addon_all_keys = ["traefik", "opentelemetry", "cloudwatch_agent", "fluent_bit",
+  addon_all_keys = ["traefik", "opentelemetry", "cloudwatch_agent",
   "node_exporter", "cadvisor", "falco", "blackbox_exporter", "observability"]
 
   addon_enabled = { for k in local.addon_all_keys : k => (
@@ -55,7 +55,6 @@ locals {
     local.addon_enabled.traefik,
     local.addon_enabled.opentelemetry,
     local.addon_enabled.cloudwatch_agent,
-    local.addon_enabled.fluent_bit,
     local.addon_enabled.blackbox_exporter,
   ])
 
@@ -91,7 +90,7 @@ locals {
       created_at = null
       extra_tags = {}
       } if contains([
-        "traefik", "opentelemetry", "cloudwatch_agent", "fluent_bit",
+        "traefik", "opentelemetry", "cloudwatch_agent",
         "node_exporter", "cadvisor", "falco", "blackbox_exporter",
     ], k) },
     # Traefik ingress stack (create mode only).
@@ -307,7 +306,6 @@ locals {
       "--providers.ecs=true",
       "--providers.ecs.clusters=${var.cluster_name}",
       "--providers.ecs.exposedByDefault=${try(local.traefik_provider_cfg.exposed_by_default, false)}",
-      "--providers.ecs.defaultRule=false",
       "--api.insecure=false",
       "--log.level=INFO",
       "--entrypoints.web.address=:80",
@@ -423,13 +421,13 @@ locals {
       processors = { batch = {} }
       exporters = merge(
         local.otel_cloudwatch_enabled ? {
-          "otlp/awscloudwatch" = {
-            region        = data.aws_region.current.region
-            loggroup_name = "/aws/ecs/${var.cluster_name}/addons/opentelemetry"
-            namespace     = coalesce(try(local.otel_cloudwatch.namespace, null), "${var.cluster_name}")
+          awsemf = {
+            region         = data.aws_region.current.region
+            log_group_name = "/aws/ecs/${var.cluster_name}/addons/opentelemetry"
+            namespace      = coalesce(try(local.otel_cloudwatch.namespace, null), "${var.cluster_name}")
           }
         } : {},
-        local.otel_xray_enabled ? { "otlp/awsxray" = { region = data.aws_region.current.region } } : {},
+        local.otel_xray_enabled ? { awsxray = { region = data.aws_region.current.region } } : {},
         local.otel_otlp_enabled ? {
           otlp = {
             endpoint = local.otel_otlp.endpoint
@@ -437,10 +435,14 @@ locals {
           }
         } : {},
       )
-      service = { pipelines = {
-        traces  = { receivers = ["otlp"], processors = ["batch"], exporters = compact([local.otel_xray_enabled ? "otlp/awsxray" : null, local.otel_otlp_enabled ? "otlp" : null]) }
-        metrics = { receivers = compact(["otlp", local.otel_discovery_enabled ? "ec2scraper" : null]), processors = ["batch"], exporters = compact([local.otel_cloudwatch_enabled ? "otlp/awscloudwatch" : null, local.otel_otlp_enabled ? "otlp" : null]) }
-      } }
+      service = { pipelines = merge(
+        local.otel_xray_enabled || local.otel_otlp_enabled ? {
+          traces = { receivers = ["otlp"], processors = ["batch"], exporters = compact([local.otel_xray_enabled ? "awsxray" : null, local.otel_otlp_enabled ? "otlp" : null]) }
+        } : {},
+        {
+          metrics = { receivers = compact(["otlp", local.otel_discovery_enabled ? "ec2scraper" : null]), processors = ["batch"], exporters = compact([local.otel_cloudwatch_enabled ? "awsemf" : null, local.otel_otlp_enabled ? "otlp" : null]) }
+        },
+      ) }
     }),
   )
 
@@ -448,8 +450,7 @@ locals {
     name             = "opentelemetry-collector"
     image            = local.addon_image.opentelemetry
     essential        = true
-    entryPoint       = ["/bin/sh", "-c"]
-    command          = ["printf '%s' \"$OTEL_CONFIG\" > /tmp/otel.yaml && exec /otelcol-contrib --config /tmp/otel.yaml"]
+    command          = ["--config=env:OTEL_CONFIG"]
     environment      = [for k, v in merge({ OTEL_CONFIG = local.otel_config }, coalesce(try(local.otel_cfg.environment, null), {})) : { name = k, value = v }]
     portMappings     = [{ containerPort = 4317, protocol = "tcp" }, { containerPort = 4318, protocol = "tcp" }]
     logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.opentelemetry }
@@ -464,70 +465,47 @@ locals {
   cwa_config = coalesce(
     try(local.cwa_cfg.config, null),
     jsonencode({
-      agent   = { region = data.aws_region.current.region }
-      metrics = { metrics_collected = { cpu = {}, mem = {}, disk = {}, net = {} }, force_flush_interval = 15 }
+      agent = { region = data.aws_region.current.region }
+      metrics = {
+        metrics_collected = {
+          cpu  = { measurement = ["cpu_usage_idle", "cpu_usage_user", "cpu_usage_system"] }
+          mem  = { measurement = ["mem_used_percent"] }
+          disk = { measurement = ["disk_used_percent"] }
+          net  = { measurement = ["net_bytes_sent", "net_bytes_recv"] }
+        }
+        force_flush_interval = 15
+      }
     }),
   )
+
+  # The cloudwatch-agent image is distroless (no /bin/sh) and, in container
+  # mode, reads its JSON config only from /etc/cwagentconfig/ on disk - there
+  # is no env-content provider like otel's. A tiny init container with a
+  # shell writes the file to a shared ephemeral volume before the agent
+  # container starts.
+  cwa_config_volume_name = "cwa-config"
+  cwa_config_mount_path  = "/etc/cwagentconfig"
+
+  cwa_config_init_container = {
+    name         = "cloudwatch-agent-config-init"
+    image        = "busybox:latest"
+    essential    = false
+    dockerLabels = { "traefik.enable" = "false" }
+    entryPoint   = ["/bin/sh", "-c"]
+    command      = ["printf '%s' \"$CWA_CONFIG\" > ${local.cwa_config_mount_path}/config.json"]
+    environment  = [{ name = "CWA_CONFIG", value = local.cwa_config }]
+    mountPoints  = [{ sourceVolume = local.cwa_config_volume_name, containerPath = local.cwa_config_mount_path }]
+  }
 
   cwa_container = {
     name             = "cloudwatch-agent"
     image            = local.addon_image.cloudwatch_agent
     essential        = true
-    entryPoint       = ["/bin/sh", "-c"]
-    command          = ["printf '%s' \"$CWA_CONFIG\" | /bin/cloudwatch-agent -configure -metric -noninteractive && exec /bin/cloudwatch-agent -daemon -c file:/tmp/cwa-config.json"]
-    environment      = [for k, v in merge({ CWA_CONFIG = local.cwa_config }, coalesce(try(local.cwa_cfg.environment, null), {})) : { name = k, value = v }]
+    dependsOn        = [{ containerName = local.cwa_config_init_container.name, condition = "SUCCESS" }]
+    mountPoints      = [{ sourceVolume = local.cwa_config_volume_name, containerPath = local.cwa_config_mount_path, readOnly = true }]
+    environment      = [for k, v in coalesce(try(local.cwa_cfg.environment, null), {}) : { name = k, value = v }]
     portMappings     = [{ containerPort = 25888, protocol = "tcp" }]
     logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.cloudwatch_agent }
-  }
-
-  # ---------------------------------------------------------------------
-  # Fluent Bit
-  # ---------------------------------------------------------------------
-
-  fb_cfg = try(var.cluster_addons.fluent_bit, {})
-
-  fluentbit_config = coalesce(
-    try(local.fb_cfg.config_override, null),
-    try(local.fb_cfg.config, null),
-    <<EOF
-[SERVICE]
-    Flush         5
-    Daemon        off
-    Log_Level     info
-
-[INPUT]
-    Name              tail
-    Path              /var/log/containers/*.log
-    Parser            docker
-    Tag               ecs.*
-    Mem_Buf_Limit     5MB
-    Refresh_Interval  10
-
-[FILTER]
-    Name              kubernetes
-    Match             ecs.*
-    Merge_Log         On
-    Keep_Log          Off
-
-[OUTPUT]
-    Name              cloudwatch
-    Match             ecs.*
-    Region            ${data.aws_region.current.region}
-    Log_Group_Name    ${local.awslogs_options.fluent_bit["awslogs-group"]}
-    Log_Stream_Name   {stream_name}
-    Topic_Name        ecs
-    Auto_Create_Group true
-EOF
-  )
-
-  fluentbit_container = {
-    name             = "fluent-bit"
-    image            = local.addon_image.fluent_bit
-    essential        = true
-    entryPoint       = ["/bin/sh", "-c"]
-    command          = ["printf '%s' \"$FLUENTBIT_CONFIG\" > /fluent-bit/etc/fluent-bit.conf && exec /fluent-bit/bin/fluent-bit -c /fluent-bit/etc/fluent-bit.conf"]
-    environment      = [for k, v in merge({ FLUENTBIT_CONFIG = local.fluentbit_config }, coalesce(try(local.fb_cfg.environment, null), {})) : { name = k, value = v }]
-    logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.fluent_bit }
   }
 
   # ---------------------------------------------------------------------
@@ -575,6 +553,7 @@ EOF
     name             = "falco"
     image            = local.addon_image.falco
     essential        = true
+    dockerLabels     = { "traefik.enable" = "false" }
     command          = concat(["--driver", try(local.falco_cfg.driver_mode, "ebpf")], coalesce(try(local.falco_cfg.extra_args, null), []))
     environment      = [for k, v in coalesce(try(local.falco_cfg.environment, null), {}) : { name = k, value = v }]
     logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.falco }
