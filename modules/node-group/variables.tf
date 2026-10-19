@@ -79,6 +79,12 @@ variable "cloudinit_config" {
   default     = {}
 }
 
+variable "force_delete" {
+  description = "Destroy the ASG without waiting for instances to terminate (skips graceful drain). Useful for fast teardown of disposable environments."
+  type        = bool
+  default     = false
+}
+
 variable "autoscaling_policies_enabled" {
   type    = bool
   default = false
@@ -90,20 +96,9 @@ variable "protect_from_scale_in" {
   default     = true
 }
 
-variable "use_tagger" {
-  type    = bool
-  default = true
-}
-
-variable "tagger_context" {
-  type    = any
-  default = null
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
-}
+# Tagger variables (use_tagger, tagger_context, tags,
+# tagger_additional_services) are declared in tagger.tf - the verbatim copy
+# from terraform-null-tagger. Do not redeclare them here.
 
 variable "ecs_agent_config" {
   description = "ECS Container Agent configuration appended to /etc/ecs/ecs.config at first boot - generic environment passthrough plus structurally built registry auth; a first-boot systemd unit then enables and starts the packaged ecs unit. See docs/rfc-ecs-agent-registry-auth.md."

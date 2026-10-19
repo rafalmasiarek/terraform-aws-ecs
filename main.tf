@@ -1,9 +1,17 @@
 locals {
+  # Tag profile for cluster-level resources - lets cost/ownership tooling
+  # group by cluster.
+  cluster_service_profile = {
+    container = {
+      cluster = var.name
+    }
+  }
+
   taggable = {
     this = {
       name       = var.name
-      service    = {}
-      attributes = []
+      service    = local.cluster_service_profile
+      attributes = ["cluster"]
       created_at = null
       extra_tags = {}
     }
@@ -15,7 +23,7 @@ locals {
   exec_s3_bucket_name = var.exec_command_s3 == null ? null : (
     try(var.exec_command_s3.bucket.name, null) != null
     ? var.exec_command_s3.bucket.name
-    : "${var.name}-exec-logs-${try(data.aws_region.current[0].region, var.name)}"
+    : "${var.name}-exec-logs-${data.aws_region.current[0].region}"
   )
   exec_s3_key_prefix = var.exec_command_s3 == null ? null : coalesce(var.exec_command_s3.bucket.key_prefix, var.name)
   exec_kms_create    = try(var.exec_command_s3.kms.create, false) == true
@@ -24,10 +32,8 @@ locals {
   # An explicitly supplied existing log group also enables exec logging -
   # otherwise the destination is returned in outputs but never configured.
   exec_logging_enabled = var.create_cloudwatch_log_group || var.cloudwatch_log_group_name != null || var.exec_command_s3 != null
-  # Falls back to the guessed name only when create_cloudwatch_log_group is
-  # true (the log group actually exists) or the caller explicitly named an
-  # existing one - never a blind guess, which would wire execute_command's
-  # log_configuration at a log group that was never created.
+  # Only the guessed name when the log group actually exists or is named
+  # explicitly - never a blind guess pointing execute_command at nothing.
   exec_cwl_name = var.create_cloudwatch_log_group ? try(aws_cloudwatch_log_group.this[0].name, null) : var.cloudwatch_log_group_name
 
   exec_s3_bucket_arn = local.exec_s3_bucket_name == null ? null : (
@@ -35,8 +41,9 @@ locals {
   )
 }
 
+# Also consumed by iam.tf's instance_awslogs policy.
 data "aws_region" "current" {
-  count = local.exec_s3_bucket_create && try(var.exec_command_s3.bucket.name, null) == null ? 1 : 0
+  count = (local.exec_s3_bucket_create && try(var.exec_command_s3.bucket.name, null) == null) || var.create_instance_iam_role ? 1 : 0
 }
 
 resource "aws_ecs_cluster" "this" {
@@ -80,8 +87,9 @@ resource "aws_cloudwatch_log_group" "this" {
   tags = local.tagger_tags["this"]
 }
 
+# Also consumed by iam.tf's instance_awslogs policy.
 data "aws_caller_identity" "current" {
-  count = local.exec_kms_create ? 1 : 0
+  count = local.exec_kms_create || var.create_instance_iam_role ? 1 : 0
 }
 
 data "aws_iam_policy_document" "exec_kms" {
@@ -192,6 +200,8 @@ resource "aws_ecs_capacity_provider" "ec2" {
       instance_warmup_period    = try(each.value.managed_scaling.instance_warmup_period, 300)
     }
   }
+
+  tags = local.tagger_tags["this"]
 }
 
 resource "aws_ecs_cluster_capacity_providers" "this" {

@@ -14,6 +14,24 @@ data "aws_ec2_instance_type" "this" {
 }
 
 locals {
+  # Tag profile: attributes node spend to its cluster.
+  node_group_service_profile = {
+    container = {
+      cluster    = var.cluster_name
+      node_group = var.name
+    }
+  }
+
+  taggable = {
+    this = {
+      name       = var.name
+      service    = local.node_group_service_profile
+      attributes = ["node-group"]
+      created_at = null
+      extra_tags = {}
+    }
+  }
+
   resolved_ami_id = var.ami_id != null ? var.ami_id : (
     contains(try(data.aws_ec2_instance_type.this[0].supported_architectures, []), "arm64")
     ? data.aws_ssm_parameter.ami_arm64[0].value
@@ -152,11 +170,8 @@ ${join("\n", local.agent_env_lines)}
 ${local.auth_block}
 EOT
 
-  # First-boot agent start. Not enabled: runcmd (once per instance) starts it,
-  # so reboots go through the packaged ecs unit (enabled by the AMI, or by
-  # enable --now on first boot) and the agent is never restarted by this
-  # module again. The unit only enables/starts the packaged ecs unit - it
-  # never writes to it.
+  # Not systemd-enabled: runcmd starts it once per instance; reboots then go
+  # through the packaged ecs unit, so this module never restarts it again.
   agent_start_unit = <<-EOT
 [Unit]
 Description=Start the ECS agent (managed by Terraform, once per instance)
@@ -208,7 +223,7 @@ module "instance_role" {
     kms_key_arns               = concat(var.iam.create.least_privilege.kms_key_arns, local.registry_auth_kms_arns)
     route53_hosted_zone_arns   = var.iam.create.least_privilege.route53_hosted_zone_arns
   }
-  tags = var.tags
+  tags = local.tagger_tags["this"]
 }
 
 resource "aws_iam_instance_profile" "instance" {
@@ -220,16 +235,11 @@ resource "aws_iam_instance_profile" "instance" {
 locals {
   agent_start_unit_name = "terraform-ecs-agent-start"
 
-  # The config script is appended after the user's own parts (in order) as a
-  # raw cloud-init part - the renderer emits shell_scripts parts BEFORE
-  # cloudinit_parts, so keeping it in cloudinit_parts preserves "user parts run
-  # first" (a user part may write registry_auth.password.file, which the script
-  # waits for). The user's entries are never touched: the config script only
-  # appends module-owned lines to /etc/ecs/ecs.config, and the start unit only
-  # enables/starts the packaged ecs unit (no unit files of its own, no
-  # drop-ins). Start is queued non-blocking from runcmd: the unit is ordered
-  # After=cloud-final.service, which is the very unit running runcmd, so a
-  # blocking start would deadlock.
+  # Kept in cloudinit_parts (not shell_scripts, which the renderer always
+  # runs first) so user parts run before this script - one may write
+  # registry_auth.password.file, which this script waits for. Start is
+  # queued non-blocking from runcmd: the unit's After=cloud-final.service
+  # is the very unit running runcmd, so a blocking start would deadlock.
   node_group_cloudinit_config = merge(
     var.cloudinit_config,
     {
@@ -268,8 +278,12 @@ module "nodes" {
   associate_public_ip_address = var.associate_public_ip_address
   iam_instance_profile_name   = local.node_role_profile_name
   key_name                    = var.key_name
-  cloudinit_config            = local.node_group_cloudinit_config
-  block_device_mappings       = var.block_device_mappings
+  # Pin ssh_authorized_keys to a list - try() with a {} default would hand
+  # an empty object to a list(string) variable and fail the plan.
+  cloudinit_config = merge(local.node_group_cloudinit_config, {
+    ssh_authorized_keys = []
+  })
+  block_device_mappings = var.block_device_mappings
 
   min_size               = var.min_size
   max_size               = var.max_size
@@ -282,10 +296,11 @@ module "nodes" {
   # is the correct type.
   protect_from_scale_in = var.protect_from_scale_in
   health_check_type     = "EC2"
+  force_delete          = var.force_delete
 
   autoscaling_policies_enabled = var.autoscaling_policies_enabled
 
   use_tagger     = var.use_tagger
   tagger_context = var.tagger_context
-  tags           = var.tags
+  tags           = local.tagger_tags["this"]
 }
