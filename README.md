@@ -52,7 +52,7 @@ module "ecs" {
 
   cluster_addons = {
     observability = {}
-    traefik       = { port = 8080 }
+    traefik       = {}
   }
 }
 ```
