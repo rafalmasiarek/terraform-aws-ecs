@@ -28,7 +28,7 @@ module "ecs" {
 
 | Preset | Model | What it does | Docs |
 |---|---|---|---|
-| `traefik` | EC2 → DAEMON bridge (host ports 80/443); Fargate → REPLICA awsvpc | Reverse proxy / ingress. Create mode builds an internal ALB by default; NLB, routes, ACME/manual TLS supported. | [traefik.md](../modules/addons/docs/traefik.md) |
+| `traefik` | EC2 → DAEMON bridge (host ports 80/443); Fargate → REPLICA awsvpc | Reverse proxy / ingress. Create mode builds an internal ALB by default; NLB, HTTP/TCP/UDP routes, ACME/manual TLS supported. | [traefik.md](../modules/addons/docs/traefik.md) |
 | `opentelemetry` | Fargate REPLICA | OTel collector: OTLP in (4317/4318), CloudWatch/X-Ray/OTLP out. | [opentelemetry.md](../modules/addons/docs/opentelemetry.md) |
 | `cloudwatch_agent` | Fargate REPLICA | CloudWatch agent — host/container metrics. | [cloudwatch_agent.md](../modules/addons/docs/cloudwatch_agent.md) |
 | `node_exporter` | EC2 DAEMON (bridge, host port 9100) | Prometheus node exporter per node. | [node_exporter.md](../modules/addons/docs/node_exporter.md) |

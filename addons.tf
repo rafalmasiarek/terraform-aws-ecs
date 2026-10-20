@@ -30,8 +30,10 @@ locals {
   # or tls_enabled on either a created ALB (443 listener) or an existing LB.
   addons_traefik_entrypoint_443 = contains(["traefik", "manual"], try(local.addons_traefik.tls.managed_by, "lb")) || try(local.addons_traefik_ingress.tls_enabled, false)
 
-  addons_traefik_routes_count = length(coalesce(try(local.addons_traefik.routes, null), []))
-  addons_traefik_acme         = try(local.addons_traefik.tls.managed_by, "lb") == "traefik" && try(local.addons_traefik.tls.acme, null) != null
+  addons_traefik_routes_count     = length(coalesce(try(local.addons_traefik.routes, null), []))
+  addons_traefik_tcp_routes_count = length(coalesce(try(local.addons_traefik.tcp_routes, null), []))
+  addons_traefik_udp_routes_count = length(coalesce(try(local.addons_traefik.udp_routes, null), []))
+  addons_traefik_acme             = try(local.addons_traefik.tls.managed_by, "lb") == "traefik" && try(local.addons_traefik.tls.acme, null) != null
 }
 
 module "addons" {
@@ -49,16 +51,18 @@ module "addons" {
   cluster_addons = var.cluster_addons
 
   plan_facts = {
-    has_ec2_capacity       = local.addons_has_ec2_capacity
-    has_fargate_capacity   = local.addons_has_fargate_capacity
-    is_mixed               = local.addons_is_mixed
-    traefik_daemon         = local.addons_traefik_daemon
-    traefik_create_lb      = local.addons_traefik_create_lb
-    traefik_nlb            = local.addons_traefik_nlb
-    traefik_internal       = local.addons_traefik_internal
-    traefik_entrypoint_443 = local.addons_traefik_entrypoint_443
-    traefik_routes_count   = local.addons_traefik_routes_count
-    traefik_acme           = local.addons_traefik_acme
+    has_ec2_capacity         = local.addons_has_ec2_capacity
+    has_fargate_capacity     = local.addons_has_fargate_capacity
+    is_mixed                 = local.addons_is_mixed
+    traefik_daemon           = local.addons_traefik_daemon
+    traefik_create_lb        = local.addons_traefik_create_lb
+    traefik_nlb              = local.addons_traefik_nlb
+    traefik_internal         = local.addons_traefik_internal
+    traefik_entrypoint_443   = local.addons_traefik_entrypoint_443
+    traefik_routes_count     = local.addons_traefik_routes_count
+    traefik_tcp_routes_count = local.addons_traefik_tcp_routes_count
+    traefik_udp_routes_count = local.addons_traefik_udp_routes_count
+    traefik_acme             = local.addons_traefik_acme
   }
 
   use_tagger     = var.use_tagger

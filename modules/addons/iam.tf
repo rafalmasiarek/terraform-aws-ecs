@@ -177,7 +177,7 @@ resource "aws_iam_role_policy" "execution_awslogs" {
 }
 
 resource "aws_iam_role_policy" "traefik_execution_ssm" {
-  count = local.addon_enabled.traefik && local.traefik_routes_count > 0 ? 1 : 0
+  count = local.addon_enabled.traefik && local.traefik_needs_dynamic_file ? 1 : 0
 
   name = "${var.cluster_name}-addon-traefik-ssm"
   role = aws_iam_role.execution["traefik"].id
@@ -195,7 +195,7 @@ resource "aws_iam_role_policy" "traefik_execution_ssm" {
 # Traefik ACME: DNS-01 challenge records are managed by traefik itself -
 # the task role needs Route53 record mutation on the caller's zones.
 resource "aws_iam_role_policy" "traefik_acme_dns" {
-  count = local.addon_enabled.traefik && local.traefik_acme ? 1 : 0
+  count = local.addon_enabled.traefik && local.traefik_acme && local.traefik_acme_challenge_type == "dns" ? 1 : 0
 
   name = "${var.cluster_name}-addon-traefik-acme-dns"
   role = aws_iam_role.task["traefik"].id
