@@ -7,12 +7,9 @@ data "aws_region" "current" {
 # (full reference: registry/repo:version-or-digest) for production use.
 locals {
   default_images = {
-    traefik          = "traefik:latest"
-    opentelemetry    = "public.ecr.aws/aws-observability/aws-otel-collector:latest"
-    cloudwatch_agent = "public.ecr.aws/cloudwatch-agent/cloudwatch-agent:latest"
-    # -debug variant: the standard image is distroless (no /bin/sh), but the
-    # container bootstrap needs a shell to materialize the config secret.
-    fluent_bit        = "fluent/fluent-bit:latest-debug"
+    traefik           = "traefik:latest"
+    opentelemetry     = "public.ecr.aws/aws-observability/aws-otel-collector:latest"
+    cloudwatch_agent  = "public.ecr.aws/cloudwatch-agent/cloudwatch-agent:latest"
     node_exporter     = "prom/node-exporter:latest"
     cadvisor          = "ghcr.io/google/cadvisor:latest"
     falco             = "falcosecurity/falco:latest"

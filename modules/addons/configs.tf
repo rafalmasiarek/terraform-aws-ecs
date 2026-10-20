@@ -3,7 +3,7 @@
 # start from an environment secret.
 
 resource "aws_ssm_parameter" "traefik_routes" {
-  count = local.addon_enabled.traefik && local.traefik_routes_count > 0 ? 1 : 0
+  count = local.addon_enabled.traefik && local.traefik_needs_dynamic_file ? 1 : 0
 
   name  = "/ecs/${var.cluster_name}/addon-traefik-routes"
   type  = "SecureString"

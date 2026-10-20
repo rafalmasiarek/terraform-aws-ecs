@@ -71,7 +71,6 @@ output "addons" {
     traefik           = try(module.addons[0].traefik, null)
     opentelemetry     = try(module.addons[0].opentelemetry, null)
     cloudwatch_agent  = try(module.addons[0].cloudwatch_agent, null)
-    fluent_bit        = try(module.addons[0].fluent_bit, null)
     node_exporter     = try(module.addons[0].node_exporter, null)
     cadvisor          = try(module.addons[0].cadvisor, null)
     falco             = try(module.addons[0].falco, null)

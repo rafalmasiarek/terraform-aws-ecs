@@ -184,7 +184,7 @@ variable "task_sg_egress_rules" {
 }
 
 variable "services" {
-  description = "One ECS service + task definition per entry. See modules/service/variables.tf for the full per-entry shape - every field there is a key in this entry's object. container_definitions is typically built by calling this repo's modules/container-definition submodule once per container, outside this module. Root-level extras: open_task_ports = { source_cidr_ipv4?, source_cidr_ipv6?, source_security_group_id? } auto-opens the entry's container port mappings (bridge: hostPort, awsvpc/Fargate: containerPort) on the cluster's task SG, tagged with the service identity - opt-in per entry, omitted = no ingress rules. source_security_group_id models an ALB/NLB or any other internal ingress SG; source_cidr_ipv4/ipv6 model a plain CIDR source. At least one of the three is required when open_task_ports is set."
+  description = "One ECS service + task definition per entry. See modules/service/variables.tf for the full per-entry shape - every field there is a key in this entry's object. container_definitions is typically built by calling this repo's modules/container-definition submodule once per container, outside this module. Root-level extras: open_task_ports = { source_cidr_ipv4?, source_cidr_ipv6?, source_security_group_id? } auto-opens the entry's container port mappings (bridge: hostPort, awsvpc/Fargate: containerPort) on the cluster's task SG, tagged with the service identity - opt-in per entry, omitted = no ingress rules. source_security_group_id models an ALB/NLB or any other internal ingress SG; source_cidr_ipv4/ipv6 model a plain CIDR source. At least one of the three is required when open_task_ports is set. In awsvpc mode, a portMappings entry with containerPort = null gets a stable port auto-assigned from 20000-60000 (derived from the service/container/mapping address, not re-randomized between applies) instead of requiring the caller to pick one and risk colliding with another service's guess - the resolved value is also injected as env var PORT_<index> for the container's own command to bind to. A container with more than one portMapping (either network mode) gets a traefik.<http|tcp|udp>.services.<name>.loadbalancer.server.port dockerLabel per port, keyed on containerPort. Give the portMapping its own name (ECS's Service Connect field) and that becomes the traefik service name verbatim - write the same word in cluster_addons.traefik's routes/tcp_routes/udp_routes service field (the module appends @ecs itself), nothing to reconstruct. An unnamed port falls back to <service-key>-<container-name>-<index>, unique by construction but only referenceable if you know the formula."
   type        = any
   default     = {}
 
@@ -292,7 +292,7 @@ variable "infrastructure_role_arn" {
 }
 
 variable "cluster_addons" {
-  description = "ECS cluster infrastructure add-ons: traefik, opentelemetry, cloudwatch_agent, fluent_bit, node_exporter, cadvisor, falco, blackbox_exporter. Omit (null) to disable all. See docs/addons.md and modules/addons/variables.tf for the full schema and per-preset semantics."
+  description = "ECS cluster infrastructure add-ons: traefik, opentelemetry, cloudwatch_agent, node_exporter, cadvisor, falco, blackbox_exporter. Omit (null) to disable all. See docs/addons.md and modules/addons/variables.tf for the full schema and per-preset semantics."
   type        = any
   default     = null
 
@@ -301,9 +301,9 @@ variable "cluster_addons" {
   validation {
     condition = var.cluster_addons == null ? true : alltrue([
       for k in keys(var.cluster_addons) : contains(
-        ["traefik", "opentelemetry", "cloudwatch_agent", "fluent_bit",
+        ["traefik", "opentelemetry", "cloudwatch_agent",
       "node_exporter", "cadvisor", "falco", "blackbox_exporter", "observability"], k)
     ])
-    error_message = "cluster_addons: unknown preset. Valid keys: traefik, opentelemetry, cloudwatch_agent, fluent_bit, node_exporter, cadvisor, falco, blackbox_exporter, observability."
+    error_message = "cluster_addons: unknown preset. Valid keys: traefik, opentelemetry, cloudwatch_agent, node_exporter, cadvisor, falco, blackbox_exporter, observability."
   }
 }

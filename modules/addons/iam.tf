@@ -29,7 +29,6 @@ locals {
     traefik           = []
     opentelemetry     = []
     cloudwatch_agent  = []
-    fluent_bit        = []
     node_exporter     = []
     cadvisor          = []
     falco             = []
@@ -53,13 +52,6 @@ locals {
         effect    = "Allow"
         actions   = ["cloudwatch:PutMetricData"]
         resources = ["*"]
-      }]
-    }
-    fluent_bit = {
-      logs = [{
-        effect    = "Allow"
-        actions   = ["logs:PutLogEvents", "logs:CreateLogStream", "logs:DescribeLogStreams"]
-        resources = ["arn:aws:logs:*:*:log-group:/aws/ecs/${var.cluster_name}/addons/*:*"]
       }]
     }
     opentelemetry = {
@@ -184,10 +176,26 @@ resource "aws_iam_role_policy" "execution_awslogs" {
   })
 }
 
+resource "aws_iam_role_policy" "traefik_execution_ssm" {
+  count = local.addon_enabled.traefik && local.traefik_needs_dynamic_file ? 1 : 0
+
+  name = "${var.cluster_name}-addon-traefik-ssm"
+  role = aws_iam_role.execution["traefik"].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["ssm:GetParameters"]
+      Resource = [aws_ssm_parameter.traefik_routes[0].arn]
+    }]
+  })
+}
+
 # Traefik ACME: DNS-01 challenge records are managed by traefik itself -
 # the task role needs Route53 record mutation on the caller's zones.
 resource "aws_iam_role_policy" "traefik_acme_dns" {
-  count = local.addon_enabled.traefik && local.traefik_acme ? 1 : 0
+  count = local.addon_enabled.traefik && local.traefik_acme && local.traefik_acme_challenge_type == "dns" ? 1 : 0
 
   name = "${var.cluster_name}-addon-traefik-acme-dns"
   role = aws_iam_role.task["traefik"].id
@@ -224,8 +232,6 @@ locals {
   otel_execution_role_arn     = local.addon_enabled.opentelemetry ? aws_iam_role.execution["opentelemetry"].arn : null
   cwa_task_role_arn           = local.addon_enabled.cloudwatch_agent ? aws_iam_role.task["cloudwatch_agent"].arn : null
   cwa_execution_role_arn      = local.addon_enabled.cloudwatch_agent ? aws_iam_role.execution["cloudwatch_agent"].arn : null
-  fb_task_role_arn            = local.addon_enabled.fluent_bit ? aws_iam_role.task["fluent_bit"].arn : null
-  fb_execution_role_arn       = local.addon_enabled.fluent_bit ? aws_iam_role.execution["fluent_bit"].arn : null
   ne_task_role_arn            = local.addon_enabled.node_exporter ? aws_iam_role.task["node_exporter"].arn : null
   ne_execution_role_arn       = local.addon_enabled.node_exporter ? aws_iam_role.execution["node_exporter"].arn : null
   cadvisor_task_role_arn      = local.addon_enabled.cadvisor ? aws_iam_role.task["cadvisor"].arn : null

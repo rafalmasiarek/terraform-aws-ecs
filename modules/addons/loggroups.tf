@@ -6,7 +6,7 @@
 
 resource "aws_cloudwatch_log_group" "addon" {
   for_each = { for k in keys(local.addon_services) : k => k if contains([
-    "traefik", "opentelemetry", "cloudwatch_agent", "fluent_bit",
+    "traefik", "opentelemetry", "cloudwatch_agent",
     "node_exporter", "cadvisor", "falco", "blackbox_exporter",
   ], k) }
 

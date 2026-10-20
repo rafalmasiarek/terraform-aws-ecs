@@ -11,7 +11,7 @@ locals {
   addon_has_fargate = try(var.plan_facts.has_fargate_capacity, false)
   addon_is_mixed    = try(var.plan_facts.is_mixed, false)
 
-  # Default for awsvpc addons (otel, cwa, fluent_bit, blackbox):
+  # Default for awsvpc addons (otel, cwa, blackbox):
   # mixed -> both, pure-EC2 -> EC2, pure-Fargate -> FARGATE.
   addon_default_launch = local.addon_has_ec2 && !local.addon_has_fargate ? "EC2" : "FARGATE"
 
@@ -32,7 +32,7 @@ locals {
   # Per-preset enabled flags, defaulting to true when the block is present.
   # Every known preset key is always present (defaulting to false when the
   # block is absent) so attribute access never fails on a partial map.
-  addon_all_keys = ["traefik", "opentelemetry", "cloudwatch_agent", "fluent_bit",
+  addon_all_keys = ["traefik", "opentelemetry", "cloudwatch_agent",
   "node_exporter", "cadvisor", "falco", "blackbox_exporter", "observability"]
 
   addon_enabled = { for k in local.addon_all_keys : k => (
@@ -55,7 +55,6 @@ locals {
     local.addon_enabled.traefik,
     local.addon_enabled.opentelemetry,
     local.addon_enabled.cloudwatch_agent,
-    local.addon_enabled.fluent_bit,
     local.addon_enabled.blackbox_exporter,
   ])
 
@@ -91,7 +90,7 @@ locals {
       created_at = null
       extra_tags = {}
       } if contains([
-        "traefik", "opentelemetry", "cloudwatch_agent", "fluent_bit",
+        "traefik", "opentelemetry", "cloudwatch_agent",
         "node_exporter", "cadvisor", "falco", "blackbox_exporter",
     ], k) },
     # Traefik ingress stack (create mode only).
@@ -118,7 +117,7 @@ locals {
       created_at = null
       extra_tags = {}
     } },
-    local.addon_enabled.traefik && local.traefik_routes_count > 0 ? {
+    local.addon_enabled.traefik && local.traefik_needs_dynamic_file ? {
       traefik-routes = {
         name       = "/ecs/${var.cluster_name}/addon-traefik-routes"
         service    = { container = { cluster = var.cluster_name } }
@@ -225,11 +224,50 @@ locals {
   traefik_daemon = try(var.plan_facts.traefik_daemon, false)
 
   # Ingress facts (pre-computed at the root where cluster_addons is known).
-  traefik_create_lb    = try(var.plan_facts.traefik_create_lb, true)
-  traefik_nlb          = try(var.plan_facts.traefik_nlb, false)
-  traefik_internal     = try(var.plan_facts.traefik_internal, true)
-  traefik_ep_443       = try(var.plan_facts.traefik_entrypoint_443, false)
-  traefik_routes_count = try(var.plan_facts.traefik_routes_count, 0)
+  traefik_create_lb        = try(var.plan_facts.traefik_create_lb, true)
+  traefik_nlb              = try(var.plan_facts.traefik_nlb, false)
+  traefik_internal         = try(var.plan_facts.traefik_internal, true)
+  traefik_ep_443           = try(var.plan_facts.traefik_entrypoint_443, false)
+  traefik_routes_count     = try(var.plan_facts.traefik_routes_count, 0)
+  traefik_tcp_routes_count = try(var.plan_facts.traefik_tcp_routes_count, 0)
+  traefik_udp_routes_count = try(var.plan_facts.traefik_udp_routes_count, 0)
+  traefik_dynamic_routes_count = (
+    local.traefik_routes_count + local.traefik_tcp_routes_count + local.traefik_udp_routes_count
+  )
+
+  traefik_tcp_routes = coalesce(try(local.traefik_cfg.tcp_routes, null), [])
+  traefik_udp_routes = coalesce(try(local.traefik_cfg.udp_routes, null), [])
+
+  # tls.redirect_to_https = true needs its own HTTP router (see
+  # traefik_http_routers below) even when the caller declared zero routes -
+  # the dynamic file provider, SSM secret, mount, etc. all need to exist for
+  # that router alone, not just for declared routes/tcp_routes/udp_routes.
+  traefik_needs_redirect_catchall = local.traefik_ep_443 && local.traefik_redirect_to_https
+  # ALB target group health checks always hit /ping (traefik.tf), on every
+  # port - needs its own router per entrypoint, not traefik's built-in
+  # single-entrypoint --ping.entryPoint.
+  traefik_needs_ping_router = !local.traefik_nlb
+  traefik_needs_dynamic_file = (
+    local.traefik_dynamic_routes_count > 0
+    || local.traefik_needs_redirect_catchall
+    || local.traefik_needs_ping_router
+  )
+
+  # Entrypoint name per container port in traefik_tg_ports. 80/443 keep
+  # "web"/"websecure" (assumed elsewhere - ACME, the redirect catch-all,
+  # route defaults). Any other port uses its listener's entrypoint_name,
+  # or falls back to "ep<port>".
+  traefik_entrypoint_name = {
+    for p in local.traefik_tg_ports : p => (
+      p == 80 ? "web" : p == 443 ? "websecure" : try(
+        [
+          for l in values(local.traefik_listeners) :
+          l.entrypoint_name if coalesce(try(l.container_port, null), l.port) == p && try(l.entrypoint_name, null) != null
+        ][0],
+        "ep${p}"
+      )
+    )
+  }
 
   # Subnets: awsvpc tasks default to every available subnet of the VPC.
   # Locals are evaluated unconditionally regardless of addon_enabled, so the
@@ -240,26 +278,93 @@ locals {
     local.addon_enabled.traefik ? [for s in data.aws_subnets.vpc[0].ids : s] : []
   )
 
-  # Declarative routes -> dynamic file provider config, delivered through
-  # an SSM parameter secret (TRAEFIK_ROUTES) written to /etc/traefik/dynamic.
-  traefik_routes_yaml = local.traefik_routes_count > 0 ? yamlencode({
-    http = {
-      routers = {
-        for r in coalesce(try(local.traefik_cfg.routes, null), []) : r.name => {
-          rule        = r.rule
-          entryPoints = coalesce(try(r.entrypoints, null), ["web"])
-          service     = r.service
-        }
+  # Declarative routes -> dynamic file provider config (TRAEFIK_ROUTES via
+  # SSM). redirect-to-https is a router here, not an entrypoint-level
+  # redirect flag, so it can exclude the ACME challenge path and /ping
+  # (traefik#7883) instead of catching everything unconditionally.
+  traefik_http_routers = merge(
+    local.traefik_routes_count > 0 ? {
+      for r in coalesce(try(local.traefik_cfg.routes, null), []) : r.name => {
+        rule        = r.rule
+        entryPoints = coalesce(try(r.entrypoints, null), ["web"])
+        service     = "${r.service}@ecs"
+      }
+    } : {},
+    local.traefik_needs_redirect_catchall ? {
+      "redirect-to-https" = {
+        rule        = "!PathPrefix(`/.well-known/acme-challenge/`) && !Path(`/ping`)"
+        entryPoints = ["web"]
+        middlewares = ["redirect-to-https"]
+        service     = "noop@internal"
+        priority    = 1000000
+      }
+    } : {},
+    local.traefik_needs_ping_router ? {
+      ping = {
+        rule        = "PathPrefix(`/ping`)"
+        entryPoints = [for p in local.traefik_tg_ports : local.traefik_entrypoint_name[p]]
+        service     = "ping@internal"
+        priority    = 1000000
+      }
+    } : {},
+  )
+
+  traefik_http_middlewares = local.traefik_needs_redirect_catchall ? {
+    "redirect-to-https" = {
+      redirectScheme = {
+        scheme    = "https"
+        permanent = true
       }
     }
-  }) : null
+  } : {}
+
+  traefik_routes_yaml = local.traefik_needs_dynamic_file ? yamlencode(merge(
+    length(local.traefik_http_routers) > 0 ? {
+      http = merge(
+        { routers = local.traefik_http_routers },
+        length(local.traefik_http_middlewares) > 0 ? { middlewares = local.traefik_http_middlewares } : {},
+      )
+    } : {},
+    local.traefik_tcp_routes_count > 0 ? {
+      tcp = {
+        routers = {
+          for r in local.traefik_tcp_routes : r.name => {
+            rule        = coalesce(try(r.rule, null), "HostSNI(`*`)")
+            entryPoints = [r.name]
+            service     = "${r.service}@ecs"
+          }
+        }
+      }
+    } : {},
+    local.traefik_udp_routes_count > 0 ? {
+      udp = {
+        routers = {
+          for r in local.traefik_udp_routes : r.name => {
+            entryPoints = [r.name]
+            service     = "${r.service}@ecs"
+          }
+        }
+      }
+    } : {},
+  )) : null
 
   # TLS management: "lb" (default, ALB terminates), "traefik" (ACME Let's
   # Encrypt), or "manual" (user-provided certs in a directory).
   traefik_tls_managed_by = try(local.traefik_cfg.tls.managed_by, "lb")
-  traefik_acme           = local.traefik_tls_managed_by == "traefik"
+  traefik_acme           = try(var.plan_facts.traefik_acme, false)
   traefik_manual_tls     = local.traefik_tls_managed_by == "manual"
-  traefik_acme_cfg       = try(local.traefik_cfg.tls.acme, null)
+  # Default true (preserves existing behavior). Safe to combine with any
+  # acme.challenge_type - see traefik_http_routers' redirect-to-https
+  # router above, which excludes the ACME challenge path from the redirect
+  # instead of the module relying on a plain entrypoint-level redirect.
+  traefik_redirect_to_https = try(local.traefik_cfg.tls.redirect_to_https, true)
+  traefik_acme_cfg          = try(local.traefik_cfg.tls.acme, null)
+
+  # "dns" (default, wildcard-capable, needs a provider+credentials).
+  # "http" (no DNS provider needed; single hostnames only).
+  # "tls" (no DNS provider, no port-80 dependency - the challenge happens
+  # inside the TLS handshake on 443 itself).
+  traefik_acme_challenge_type = try(local.traefik_acme_cfg.challenge_type, "dns")
 
   # Manual TLS: certificates_directory (container path, default
   # /etc/traefik/certs) + optional storage volume (EFS/EBS) mounted there.
@@ -305,56 +410,69 @@ locals {
   traefik_flags = concat(
     [
       "--providers.ecs=true",
+      "--providers.ecs.clusters=${var.cluster_name}",
       "--providers.ecs.exposedByDefault=${try(local.traefik_provider_cfg.exposed_by_default, false)}",
-      "--providers.ecs.defaultRule=false",
       "--api.insecure=false",
       "--log.level=INFO",
+      # Dedicated health-check path, excludable from redirect_to_https.
+      # manualRouting: our own router below covers every entrypoint, not
+      # just one (an ALB's health check hits /ping on every target group).
+      "--ping=true",
+      "--ping.manualRouting=true",
     ],
-    local.traefik_ep_443 ? [
-      "--entrypoints.websecure.address=:443",
-      # Redirect all HTTP (port 80) to HTTPS (port 443).
-      "--entrypoints.web.http.redirections.entryPoint.to=websecure",
-      "--entrypoints.web.http.redirections.entryPoint.scheme=https",
-      "--entrypoints.web.http.redirections.entryPoint.permanent=true",
-    ] : [],
-    local.traefik_acme ? [
-      "--entrypoints.websecure.http.tls=true",
-      "--entrypoints.websecure.http.tls.certificatesResolvers=le",
-      "--certificatesResolvers.le.acme.email=${local.traefik_acme_cfg.email}",
-      "--certificatesResolvers.le.acme.storage=/data/acme.json",
-      "--certificatesResolvers.le.acme.dnsChallenge.provider=${try(local.traefik_acme_cfg.dns_provider, "route53")}",
-    ] : [],
+    [for p in local.traefik_tg_ports : "--entrypoints.${local.traefik_entrypoint_name[p]}.address=:${p}"],
+    local.traefik_acme ? concat(
+      [
+        "--entrypoints.websecure.http.tls=true",
+        "--entrypoints.websecure.http.tls.certResolver=le",
+        "--certificatesResolvers.le.acme.email=${local.traefik_acme_cfg.email}",
+        "--certificatesResolvers.le.acme.storage=/data/acme.json",
+      ],
+      local.traefik_acme_challenge_type == "http" ? [
+        "--certificatesResolvers.le.acme.httpChallenge.entryPoint=web",
+        ] : local.traefik_acme_challenge_type == "tls" ? [
+        "--certificatesResolvers.le.acme.tlsChallenge=true",
+        ] : [
+        "--certificatesResolvers.le.acme.dnsChallenge.provider=${try(local.traefik_acme_cfg.dns_provider, "route53")}",
+      ],
+    ) : [],
     # Manual TLS: enable TLS on websecure; traefik serves certs from the
     # mounted directory (user must name files to match SNI hosts, e.g.
     # example.com.crt/.key for example.com).
     local.traefik_manual_tls ? [
       "--entrypoints.websecure.http.tls=true",
     ] : [],
-    local.traefik_routes_count > 0 ? [
+    local.traefik_needs_dynamic_file ? [
       "--providers.file.directory=/etc/traefik/dynamic",
       "--providers.file.watch=true",
     ] : [],
+    [for r in local.traefik_tcp_routes : "--entrypoints.${r.name}.address=:${r.port}/tcp"],
+    [for r in local.traefik_udp_routes : "--entrypoints.${r.name}.address=:${r.port}/udp"],
     coalesce(try(local.traefik_cfg.extra_args, null), []),
   )
 
   # The image entrypoint execs the first argument (command must lead with
   # "traefik"), and Traefik 3.7+ treats a bare first argument as a subcommand,
   # so bootstrap through a shell that materializes the routes file first.
-  traefik_bootstrap = concat(
-    local.traefik_routes_count > 0 ? ["printf '%s' \"$TRAEFIK_ROUTES\" > /etc/traefik/dynamic/routes.yml &&"] : [],
+  traefik_bootstrap = join(" ", concat(
+    local.traefik_needs_dynamic_file ? ["mkdir -p /etc/traefik/dynamic && printf '%s' \"$TRAEFIK_ROUTES\" > /etc/traefik/dynamic/routes.yml &&"] : [],
     ["exec /entrypoint.sh ${join(" ", local.traefik_flags)}"],
-  )
+  ))
 
   traefik_env_map = merge(
-    { TRAEFIK_ROUTES = local.traefik_routes_yaml },
+    local.traefik_needs_dynamic_file ? {} : { TRAEFIK_ROUTES = local.traefik_routes_yaml },
+    # Forces a new task definition revision when routes content changes
+    # (the SSM secret's ARN alone wouldn't).
+    local.traefik_needs_dynamic_file ? { TRAEFIK_ROUTES_HASH = md5(local.traefik_routes_yaml) } : {},
     coalesce(try(local.traefik_cfg.environment, null), {}),
   )
 
   # Port mappings: hostPort always equals containerPort (Fargate requires
   # the match; EC2 awsvpc accepts it; daemon binds the node port directly).
   traefik_port_mappings = concat(
-    [{ containerPort = 80, hostPort = 80, protocol = "tcp" }],
-    local.traefik_ep_443 ? [{ containerPort = 443, hostPort = 443, protocol = "tcp" }] : [],
+    [for p in local.traefik_tg_ports : { containerPort = p, hostPort = p, protocol = "tcp" }],
+    [for r in local.traefik_tcp_routes : { containerPort = r.port, hostPort = r.port, protocol = "tcp" }],
+    [for r in local.traefik_udp_routes : { containerPort = r.port, hostPort = r.port, protocol = "udp" }],
   )
 
   traefik_container = merge(
@@ -363,13 +481,13 @@ locals {
       image            = local.addon_image.traefik
       essential        = true
       entryPoint       = ["/bin/sh", "-c"]
-      command          = local.traefik_bootstrap
+      command          = [local.traefik_bootstrap]
       environment      = [for k, v in local.traefik_env_map : { name = k, value = v } if v != null]
       portMappings     = local.traefik_port_mappings
       logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.traefik }
     },
     length(local.traefik_mount_points) > 0 ? { mountPoints = local.traefik_mount_points } : {},
-    local.traefik_routes_count > 0 ? {
+    local.traefik_needs_dynamic_file ? {
       secrets = [{ name = "TRAEFIK_ROUTES", valueFrom = try(aws_ssm_parameter.traefik_routes[0].arn, null) }]
     } : {},
     length(coalesce(try(local.traefik_cfg.docker_labels, null), {})) > 0 ? { dockerLabels = try(local.traefik_cfg.docker_labels, {}) } : {},
@@ -421,13 +539,13 @@ locals {
       processors = { batch = {} }
       exporters = merge(
         local.otel_cloudwatch_enabled ? {
-          "otlp/awscloudwatch" = {
-            region        = data.aws_region.current.region
-            loggroup_name = "/aws/ecs/${var.cluster_name}/addons/opentelemetry"
-            namespace     = coalesce(try(local.otel_cloudwatch.namespace, null), "${var.cluster_name}")
+          awsemf = {
+            region         = data.aws_region.current.region
+            log_group_name = "/aws/ecs/${var.cluster_name}/addons/opentelemetry"
+            namespace      = coalesce(try(local.otel_cloudwatch.namespace, null), "${var.cluster_name}")
           }
         } : {},
-        local.otel_xray_enabled ? { "otlp/awsxray" = { region = data.aws_region.current.region } } : {},
+        local.otel_xray_enabled ? { awsxray = { region = data.aws_region.current.region } } : {},
         local.otel_otlp_enabled ? {
           otlp = {
             endpoint = local.otel_otlp.endpoint
@@ -435,10 +553,14 @@ locals {
           }
         } : {},
       )
-      service = { pipelines = {
-        traces  = { receivers = ["otlp"], processors = ["batch"], exporters = compact([local.otel_xray_enabled ? "otlp/awsxray" : null, local.otel_otlp_enabled ? "otlp" : null]) }
-        metrics = { receivers = compact(["otlp", local.otel_discovery_enabled ? "ec2scraper" : null]), processors = ["batch"], exporters = compact([local.otel_cloudwatch_enabled ? "otlp/awscloudwatch" : null, local.otel_otlp_enabled ? "otlp" : null]) }
-      } }
+      service = { pipelines = merge(
+        local.otel_xray_enabled || local.otel_otlp_enabled ? {
+          traces = { receivers = ["otlp"], processors = ["batch"], exporters = compact([local.otel_xray_enabled ? "awsxray" : null, local.otel_otlp_enabled ? "otlp" : null]) }
+        } : {},
+        {
+          metrics = { receivers = compact(["otlp", local.otel_discovery_enabled ? "ec2scraper" : null]), processors = ["batch"], exporters = compact([local.otel_cloudwatch_enabled ? "awsemf" : null, local.otel_otlp_enabled ? "otlp" : null]) }
+        },
+      ) }
     }),
   )
 
@@ -446,8 +568,7 @@ locals {
     name             = "opentelemetry-collector"
     image            = local.addon_image.opentelemetry
     essential        = true
-    entryPoint       = ["/bin/sh", "-c"]
-    command          = ["printf '%s' \"$OTEL_CONFIG\" > /tmp/otel.yaml && exec /otelcol-contrib --config /tmp/otel.yaml"]
+    command          = ["--config=env:OTEL_CONFIG"]
     environment      = [for k, v in merge({ OTEL_CONFIG = local.otel_config }, coalesce(try(local.otel_cfg.environment, null), {})) : { name = k, value = v }]
     portMappings     = [{ containerPort = 4317, protocol = "tcp" }, { containerPort = 4318, protocol = "tcp" }]
     logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.opentelemetry }
@@ -462,70 +583,47 @@ locals {
   cwa_config = coalesce(
     try(local.cwa_cfg.config, null),
     jsonencode({
-      agent   = { region = data.aws_region.current.region }
-      metrics = { metrics_collected = { cpu = {}, mem = {}, disk = {}, net = {} }, force_flush_interval = 15 }
+      agent = { region = data.aws_region.current.region }
+      metrics = {
+        metrics_collected = {
+          cpu  = { measurement = ["cpu_usage_idle", "cpu_usage_user", "cpu_usage_system"] }
+          mem  = { measurement = ["mem_used_percent"] }
+          disk = { measurement = ["disk_used_percent"] }
+          net  = { measurement = ["net_bytes_sent", "net_bytes_recv"] }
+        }
+        force_flush_interval = 15
+      }
     }),
   )
+
+  # The cloudwatch-agent image is distroless (no /bin/sh) and, in container
+  # mode, reads its JSON config only from /etc/cwagentconfig/ on disk - there
+  # is no env-content provider like otel's. A tiny init container with a
+  # shell writes the file to a shared ephemeral volume before the agent
+  # container starts.
+  cwa_config_volume_name = "cwa-config"
+  cwa_config_mount_path  = "/etc/cwagentconfig"
+
+  cwa_config_init_container = {
+    name         = "cloudwatch-agent-config-init"
+    image        = "busybox:latest"
+    essential    = false
+    dockerLabels = { "traefik.enable" = "false" }
+    entryPoint   = ["/bin/sh", "-c"]
+    command      = ["printf '%s' \"$CWA_CONFIG\" > ${local.cwa_config_mount_path}/config.json"]
+    environment  = [{ name = "CWA_CONFIG", value = local.cwa_config }]
+    mountPoints  = [{ sourceVolume = local.cwa_config_volume_name, containerPath = local.cwa_config_mount_path }]
+  }
 
   cwa_container = {
     name             = "cloudwatch-agent"
     image            = local.addon_image.cloudwatch_agent
     essential        = true
-    entryPoint       = ["/bin/sh", "-c"]
-    command          = ["printf '%s' \"$CWA_CONFIG\" | /bin/cloudwatch-agent -configure -metric -noninteractive && exec /bin/cloudwatch-agent -daemon -c file:/tmp/cwa-config.json"]
-    environment      = [for k, v in merge({ CWA_CONFIG = local.cwa_config }, coalesce(try(local.cwa_cfg.environment, null), {})) : { name = k, value = v }]
+    dependsOn        = [{ containerName = local.cwa_config_init_container.name, condition = "SUCCESS" }]
+    mountPoints      = [{ sourceVolume = local.cwa_config_volume_name, containerPath = local.cwa_config_mount_path, readOnly = true }]
+    environment      = [for k, v in coalesce(try(local.cwa_cfg.environment, null), {}) : { name = k, value = v }]
     portMappings     = [{ containerPort = 25888, protocol = "tcp" }]
     logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.cloudwatch_agent }
-  }
-
-  # ---------------------------------------------------------------------
-  # Fluent Bit
-  # ---------------------------------------------------------------------
-
-  fb_cfg = try(var.cluster_addons.fluent_bit, {})
-
-  fluentbit_config = coalesce(
-    try(local.fb_cfg.config_override, null),
-    try(local.fb_cfg.config, null),
-    <<EOF
-[SERVICE]
-    Flush         5
-    Daemon        off
-    Log_Level     info
-
-[INPUT]
-    Name              tail
-    Path              /var/log/containers/*.log
-    Parser            docker
-    Tag               ecs.*
-    Mem_Buf_Limit     5MB
-    Refresh_Interval  10
-
-[FILTER]
-    Name              kubernetes
-    Match             ecs.*
-    Merge_Log         On
-    Keep_Log          Off
-
-[OUTPUT]
-    Name              cloudwatch
-    Match             ecs.*
-    Region            ${data.aws_region.current.region}
-    Log_Group_Name    ${local.awslogs_options.fluent_bit["awslogs-group"]}
-    Log_Stream_Name   {stream_name}
-    Topic_Name        ecs
-    Auto_Create_Group true
-EOF
-  )
-
-  fluentbit_container = {
-    name             = "fluent-bit"
-    image            = local.addon_image.fluent_bit
-    essential        = true
-    entryPoint       = ["/bin/sh", "-c"]
-    command          = ["printf '%s' \"$FLUENTBIT_CONFIG\" > /fluent-bit/etc/fluent-bit.conf && exec /fluent-bit/bin/fluent-bit -c /fluent-bit/etc/fluent-bit.conf"]
-    environment      = [for k, v in merge({ FLUENTBIT_CONFIG = local.fluentbit_config }, coalesce(try(local.fb_cfg.environment, null), {})) : { name = k, value = v }]
-    logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.fluent_bit }
   }
 
   # ---------------------------------------------------------------------
@@ -573,6 +671,7 @@ EOF
     name             = "falco"
     image            = local.addon_image.falco
     essential        = true
+    dockerLabels     = { "traefik.enable" = "false" }
     command          = concat(["--driver", try(local.falco_cfg.driver_mode, "ebpf")], coalesce(try(local.falco_cfg.extra_args, null), []))
     environment      = [for k, v in coalesce(try(local.falco_cfg.environment, null), {}) : { name = k, value = v }]
     logConfiguration = { logDriver = "awslogs", options = local.awslogs_options.falco }

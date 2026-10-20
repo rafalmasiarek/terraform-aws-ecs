@@ -61,6 +61,13 @@ resource "aws_lb" "traefik" {
   internal           = local.traefik_internal
   subnets            = local.traefik_lb_subnets
 
+  # ALBs are always cross-zone (not configurable); this only matters for an
+  # NLB, where it's off by default - a target registered in one AZ then
+  # can't receive traffic that lands on another AZ's node/IP. Default true
+  # so a single-task Fargate service (one AZ) is reachable through every
+  # one of the NLB's AZ endpoints, not just the one it happens to run in.
+  enable_cross_zone_load_balancing = coalesce(try(local.traefik_ingress_cfg.cross_zone_load_balancing, null), true)
+
   security_groups = concat(
     [var.cluster_security_group_id],
     coalesce(try(local.traefik_ingress_cfg.security_groups, null), []),
@@ -82,12 +89,17 @@ resource "aws_lb_target_group" "traefik" {
   vpc_id      = var.vpc_id
   target_type = local.traefik_tg_target_type
 
+  # /ping (traefik's own, enabled unconditionally - see --ping flags in
+  # main.tf) rather than "/": a real route can legitimately live at "/",
+  # and when redirect_to_https is on, "/" also needs to redirect - a path
+  # the health check and a real route could both match can't be excluded
+  # from that redirect without also exempting real traffic.
   dynamic "health_check" {
     for_each = local.traefik_nlb ? [] : [1]
     content {
       enabled             = true
       interval            = 30
-      path                = "/"
+      path                = "/ping"
       port                = "traffic-port"
       protocol            = "HTTP"
       healthy_threshold   = 2

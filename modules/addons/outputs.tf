@@ -27,14 +27,6 @@ output "cloudwatch_agent" {
   } : null
 }
 
-output "fluent_bit" {
-  description = "Fluent Bit outputs (null when disabled)."
-  value = local.addon_enabled.fluent_bit ? {
-    service_name        = try(module.fluent_bit_service[0].service_name, null)
-    task_definition_arn = try(module.fluent_bit_service[0].task_definition_arn, null)
-  } : null
-}
-
 output "node_exporter" {
   description = "Node exporter outputs (null when disabled)."
   value = local.addon_enabled.node_exporter ? {

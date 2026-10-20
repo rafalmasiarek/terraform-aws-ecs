@@ -36,7 +36,6 @@ ECS cluster module: cluster, capacity providers, EC2 node groups, services, comp
 | `traefik` | Traefik ingress controller (load balancer type service). |
 | `opentelemetry` | OTel Collector (host network, EC2). |
 | `cloudwatch_agent` | CloudWatch Agent (EC2, privileged). |
-| `fluent_bit` | Fluent Bit log router (EC2, privileged). |
 | `node_exporter` | Prometheus node exporter (EC2, host metrics). |
 | `cadvisor` | cAdvisor container metrics (EC2, privileged). |
 | `falco` | Falco runtime security (EC2, privileged). |

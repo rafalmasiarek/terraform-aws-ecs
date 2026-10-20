@@ -14,6 +14,118 @@ locals {
     local.services_has_ec2_capacity ? ["EC2"] : [],
     local.services_has_fargate_capacity ? ["FARGATE"] : [],
   )
+
+  # containerPort = null (awsvpc only - bridge's containerPort is fixed/app-
+  # controlled, only hostPort is dynamic there and ECS assigns that natively)
+  # gets a stable hash-derived port in this range, instead of callers all
+  # guessing the same number. Hash, not `random` provider: the SG rules
+  # below key for_each on the port, which must be known at plan time.
+  services_random_port_min = 20000
+  services_random_port_max = 60000
+
+  services_null_port_keys = toset(flatten([
+    for sk, sv in var.services : try(sv.network_mode, "awsvpc") == "bridge" ? [] : [
+      for ci, c in try(sv.container_definitions, []) : [
+        for pi, pm in try(c.portMappings, []) : "${sk}::${ci}::${pi}"
+        if try(pm.containerPort, null) == null
+      ]
+    ]
+  ]))
+
+  services_resolved_port = {
+    for key in local.services_null_port_keys : key => (
+      parseint(substr(md5(key), 0, 8), 16) %
+      (local.services_random_port_max - local.services_random_port_min)
+    ) + local.services_random_port_min
+  }
+
+  # Traefik's ECS provider resolves a container's real routable address
+  # (hostPort for bridge via NetworkBindings, containerPort directly for
+  # awsvpc) from the containerPort named in this label - same mechanism,
+  # same label, both modes (verified against traefik/pkg/provider/ecs
+  # config.go's getPort()). Only needed to disambiguate when a container
+  # exposes more than one port; a single port is found automatically.
+  services_port_protocol = {
+    for sk, sv in var.services : sk => [
+      for ci, c in try(sv.container_definitions, []) : {
+        for pi, pm in try(c.portMappings, []) : pi =>
+        contains(["http", "http2", "grpc"], try(pm.appProtocol, "")) ? "http" : (try(pm.protocol, "tcp") == "udp" ? "udp" : "tcp")
+      }
+    ]
+  }
+
+  # Backend names a traefik route/tcp_route/udp_route can reference: the
+  # auto-generated single-port form (traefik's own ECS-provider naming,
+  # service-<cluster>-<service-key>-<container>) or, for a multi-port
+  # container, each named port's verbatim name. Used below to find which
+  # container a route actually targets.
+  services_traefik_backend_entries = flatten([
+    for sk, sv in var.services : [
+      for ci, c in try(sv.container_definitions, []) : (
+        length(try(c.portMappings, [])) > 1 ? [
+          for pm in try(c.portMappings, []) : { name = pm.name, sk = sk, ci = ci }
+          if try(pm.name, null) != null
+          ] : [
+          { name = "service-${aws_ecs_cluster.this.name}-${sk}-${c.name}", sk = sk, ci = ci }
+        ]
+      )
+    ]
+  ])
+
+  services_traefik_backend_names = {
+    for e in local.services_traefik_backend_entries : e.name => { sk = e.sk, ci = e.ci }
+  }
+
+  # Every backend name actually referenced by a traefik route - the addon's
+  # ECS provider runs with exposedByDefault=false (opt-in only, so a route
+  # doesn't silently expose every container in the cluster), and a route
+  # already names its target explicitly. Deriving traefik.enable=true from
+  # that same name means the caller doesn't also have to duplicate it as a
+  # second, easy-to-forget docker label.
+  services_traefik_route_service_names = toset(compact(concat(
+    [for r in try(var.cluster_addons.traefik.routes, []) : try(r.service, null)],
+    [for r in try(var.cluster_addons.traefik.tcp_routes, []) : try(r.service, null)],
+    [for r in try(var.cluster_addons.traefik.udp_routes, []) : try(r.service, null)],
+  )))
+
+  services_traefik_enabled_containers = toset([
+    for name in local.services_traefik_route_service_names :
+    "${local.services_traefik_backend_names[name].sk}::${local.services_traefik_backend_names[name].ci}"
+    if contains(keys(local.services_traefik_backend_names), name)
+  ])
+
+  services_container_definitions = {
+    for sk, sv in var.services : sk => [
+      for ci, c in try(sv.container_definitions, []) : merge(c, {
+        portMappings = [
+          for pi, pm in try(c.portMappings, []) : merge(pm, {
+            containerPort = coalesce(try(pm.containerPort, null), try(local.services_resolved_port["${sk}::${ci}::${pi}"], null))
+          })
+        ]
+
+        # An explicit pm.name becomes the traefik service name verbatim - no
+        # prefix, no formula to reconstruct in a route's `service`. Falls
+        # back to the fully auto-generated <service-key>-<container>-<index>
+        # form (unique by construction) only when the caller didn't name it.
+        dockerLabels = merge(
+          try(c.dockerLabels, {}),
+          contains(local.services_traefik_enabled_containers, "${sk}::${ci}") ? { "traefik.enable" = "true" } : {},
+          length(try(c.portMappings, [])) > 1 ? {
+            for pi, pm in try(c.portMappings, []) :
+            "traefik.${local.services_port_protocol[sk][ci][pi]}.services.${coalesce(try(pm.name, null), "${sk}-${c.name}-${pi}")}.loadbalancer.server.port" =>
+            tostring(coalesce(try(pm.containerPort, null), try(local.services_resolved_port["${sk}::${ci}::${pi}"], null)))
+          } : {},
+        )
+
+        # Apps need to know a port the module picked for them - a fixed
+        # port is already known to whoever wrote the container's command.
+        environment = concat(try(c.environment, []), [
+          for pi, pm in try(c.portMappings, []) : { name = "PORT_${pi}", value = tostring(local.services_resolved_port["${sk}::${ci}::${pi}"]) }
+          if try(pm.containerPort, null) == null
+        ])
+      })
+    ]
+  }
 }
 
 module "service" {
@@ -35,7 +147,7 @@ module "service" {
   cluster_security_group_id = aws_security_group.this.id
   auto_ingress_enabled      = true
 
-  container_definitions = each.value.container_definitions
+  container_definitions = local.services_container_definitions[each.key]
 
   task_cpu     = try(each.value.task_cpu, null)
   task_memory  = try(each.value.task_memory, null)
@@ -58,8 +170,8 @@ module "service" {
 
   deployment_circuit_breaker = try(each.value.deployment_circuit_breaker, null)
   deployment_controller_type = try(each.value.deployment_controller_type, null)
-  enable_ecs_managed_tags    = try(each.value.enable_ecs_managed_tags, false)
-  propagate_tags             = try(each.value.propagate_tags, null)
+  enable_ecs_managed_tags    = try(each.value.enable_ecs_managed_tags, var.use_tagger)
+  propagate_tags             = try(each.value.propagate_tags, var.use_tagger ? "SERVICE" : null)
   service_connect            = try(each.value.service_connect, null)
 
   runtime_platform                    = try(each.value.runtime_platform, null)

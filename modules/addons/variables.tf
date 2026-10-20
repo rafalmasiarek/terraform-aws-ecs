@@ -39,7 +39,7 @@ variable "infrastructure_role_arn" {
 }
 
 variable "cluster_addons" {
-  description = "ECS cluster infrastructure add-ons: traefik, opentelemetry, cloudwatch_agent, fluent_bit, node_exporter, cadvisor, falco, blackbox_exporter. See docs/addons.md for per-preset semantics."
+  description = "ECS cluster infrastructure add-ons: traefik, opentelemetry, cloudwatch_agent, node_exporter, cadvisor, falco, blackbox_exporter. See docs/addons.md for per-preset semantics."
   type        = any
   default     = null
 
@@ -79,16 +79,33 @@ variable "cluster_addons" {
   # # awsvpc tasks: defaults to every available subnet of the VPC.
   # subnets          = optional(list(string), [])
   # security_groups  = optional(list(string), [])
-  # assign_public_ip = optional(bool, false)
+  # assign_public_ip = optional(bool)  # default: true only if subnets have no NAT egress
   # # Declarative routes (EKS-Ingress analog): each entry becomes a
-  # # traefik router. `service` is the ECS service name that hosts the
-  # # backend - the ECS provider exposes it as a traefik service of the
-  # # same name (no load_balancer arg on that ECS service; label routing).
+  # # traefik router. `service` must be "service-<ecs-service-name>-<container-name>"
+  # # (the ECS provider's actual naming convention), or the auto-generated
+  # # "<service-key>-<container-name>-<portMapping-index>" name a container
+  # # with >1 portMappings gets labeled with (see root services.tf) - no
+  # # load_balancer arg needed on that ECS service; label routing.
   # routes = optional(list(object({
   # name        = string
   # rule        = string
   # service     = string
   # entrypoints = optional(list(string), ["web"])
+  # })), [])
+  # # Non-HTTP TCP: one entrypoint per route, port = that entrypoint's port
+  # # (traefik itself must also expose it - added to its own portMappings).
+  # tcp_routes = optional(list(object({
+  # name    = string
+  # port    = number
+  # rule    = optional(string, "HostSNI(`*`)")
+  # service = string
+  # })), [])
+  # # UDP: no rule concept - a UDP router just forwards everything on its
+  # # entrypoint to the service.
+  # udp_routes = optional(list(object({
+  # name    = string
+  # port    = number
+  # service = string
   # })), [])
   # environment     = optional(map(string), {})
   # docker_labels   = optional(map(string), {})
@@ -119,6 +136,11 @@ variable "cluster_addons" {
   # load_balancer_type = optional(string, "alb")
   # # create mode: internal (default, VPC-only traffic) or internet-facing.
   # internal = optional(bool, true)
+  # # create mode, load_balancer_type = "nlb" only (ALBs are always
+  # # cross-zone, not configurable): default true so a single-task service
+  # # in one AZ is reachable through every one of the NLB's AZ endpoints,
+  # # not just the one it happens to run in.
+  # cross_zone_load_balancing = optional(bool, true)
   # # ALB create mode: terminate TLS on the LB (443 listener), requires
   # # certificate_arn. Existing mode: expose the container's 443
   # # entrypoint so your own TLS listener has a backend.
@@ -130,11 +152,13 @@ variable "cluster_addons" {
   # # TLS management: "lb" (default, ALB terminates), "traefik" (ACME),
   # # or "manual" (user-provided certs in a directory).
   # tls = optional(object({
-  # managed_by = optional(string, "lb")
-  # # ACME (managed_by = "traefik"): Let's Encrypt with DNS-01 challenge.
+  # managed_by        = optional(string, "lb")
+  # redirect_to_https = optional(bool, true) # safe with any acme.challenge_type; set false only for plain HTTP
+  # # ACME (managed_by = "traefik"): Let's Encrypt, DNS-01, HTTP-01, or TLS-ALPN-01.
   # acme = optional(object({
-  # email        = string
-  # dns_provider = optional(string, "route53")  # any traefik DNS provider
+  # email          = string
+  # challenge_type = optional(string, "dns")    # "dns", "http", or "tls"
+  # dns_provider   = optional(string, "route53") # DNS-01 only; any traefik DNS provider
   # # Persistent certificate store (optional; default: task-ephemeral /data).
   # # Exactly one of filesystem_id/volume_id/arn per type.
   # storage = optional(object({
@@ -177,7 +201,7 @@ variable "cluster_addons" {
   # })), [])
   # subnets          = optional(list(string), [])
   # security_groups  = optional(list(string), [])
-  # assign_public_ip = optional(bool, false)
+  # assign_public_ip = optional(bool)  # default: true only if subnets have no NAT egress
   # environment      = optional(map(string), {})
   # docker_labels    = optional(map(string), {})
   # command          = optional(list(string))
@@ -218,31 +242,7 @@ variable "cluster_addons" {
   # task_cpu         = optional(number, 256)
   # task_memory      = optional(number, 512)
   # config           = optional(string)  # agent JSON; null = USE_DEFAULT_CONFIG
-  # assign_public_ip = optional(bool, false)
-  # environment      = optional(map(string), {})
-  # docker_labels    = optional(map(string), {})
-  # command          = optional(list(string))
-  # extra_args       = optional(list(string), [])
-  # extra_task_policies = optional(object({
-  # managed_policy_arns = optional(list(string), [])
-  # inline_policies = optional(map(list(object({
-  # sid       = optional(string)
-  # effect    = string
-  # actions   = list(string)
-  # resources = list(string)
-  # }))), {})
-  # }), {})
-  # tags = optional(map(string), {})
-  # }))
-  #
-  # fluent_bit = optional(object({
-  # enabled          = optional(bool, true)
-  # image            = optional(string)
-  # task_cpu         = optional(number, 256)
-  # task_memory      = optional(number, 512)
-  # config           = optional(string)  # fluent-bit conf; null = generated
-  # config_override  = optional(string)
-  # assign_public_ip = optional(bool, false)
+  # assign_public_ip = optional(bool)  # default: true only if subnets have no NAT egress
   # environment      = optional(map(string), {})
   # docker_labels    = optional(map(string), {})
   # command          = optional(list(string))
@@ -333,7 +333,7 @@ variable "cluster_addons" {
   # port             = optional(number, 9115)
   # config           = optional(string)  # blackbox YAML; null = generated
   # config_override  = optional(string)
-  # assign_public_ip = optional(bool, false)
+  # assign_public_ip = optional(bool)  # default: true only if subnets have no NAT egress
   # environment      = optional(map(string), {})
   # docker_labels    = optional(map(string), {})
   # command          = optional(list(string))
@@ -377,16 +377,21 @@ variable "cluster_addons" {
     error_message = "traefik.ingress: create mode (default - an omitted or empty ingress block) builds the load balancer; subnets default to every available subnet of the VPC, certificate_arn is required when tls_enabled (ALB only - an NLB is a TCP passthrough, use tls.managed_by = \"traefik\" for HTTPS). existing mode (create_load_balancer = false) only wires the service to your target_group_arn - set tls_enabled to expose the container's 443 entrypoint to your TLS listener."
   }
 
-  # traefik tls: ACME (managed_by = "traefik") needs a contact email.
+  # traefik tls: ACME (managed_by = "traefik") needs the acme block, with a
+  # contact email - previously only checked the email when the acme block
+  # happened to be present at all, silently passing (then crashing later
+  # indexing a null tls.acme) when it was omitted entirely.
   validation {
     condition = var.cluster_addons == null ? true : (
       try(var.cluster_addons.traefik, null) == null || try(var.cluster_addons.traefik.tls, null) == null ? true : (
         try(var.cluster_addons.traefik.tls.managed_by, "lb") != "traefik"
-        || try(var.cluster_addons.traefik.tls.acme, null) == null
-        || length(try(var.cluster_addons.traefik.tls.acme.email, "")) > 0
+        || (
+          try(var.cluster_addons.traefik.tls.acme, null) != null
+          && length(try(var.cluster_addons.traefik.tls.acme.email, "")) > 0
+        )
       )
     )
-    error_message = "traefik.tls.acme: email is required when managed_by = \"traefik\" (ACME / Let's Encrypt)."
+    error_message = "traefik.tls.acme: required (with a non-empty email) when managed_by = \"traefik\" (ACME / Let's Encrypt)."
   }
 
   # traefik tls storage (acme.storage or manual tls.storage): when set,
