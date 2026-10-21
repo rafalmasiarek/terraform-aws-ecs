@@ -110,6 +110,15 @@ locals {
         dockerLabels = merge(
           try(c.dockerLabels, {}),
           contains(local.services_traefik_enabled_containers, "${sk}::${ci}") ? { "traefik.enable" = "true" } : {},
+          # traefik.enable also makes the ECS provider build its own default
+          # router (Host(<raw ecs service name>)) on every entrypoint,
+          # including the TLS one - which then tries (and fails) to get an
+          # ACME cert for that nonsense hostname. Single-port only: a
+          # multi-port container already declares >1 service via labels
+          # below, which makes the provider skip the default router outright.
+          contains(local.services_traefik_enabled_containers, "${sk}::${ci}") && length(try(c.portMappings, [])) <= 1 ? {
+            "traefik.http.routers.service-${aws_ecs_cluster.this.name}-${sk}-${c.name}.entrypoints" = "web"
+          } : {},
           length(try(c.portMappings, [])) > 1 ? {
             for pi, pm in try(c.portMappings, []) :
             "traefik.${local.services_port_protocol[sk][ci][pi]}.services.${coalesce(try(pm.name, null), "${sk}-${c.name}-${pi}")}.loadbalancer.server.port" =>
