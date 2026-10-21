@@ -35,8 +35,20 @@ locals {
     ),
   )
 
+  # A caller's listeners map can mix a string field (entrypoint_name) with
+  # numeric ones (port/container_port) across several entries - Terraform
+  # unifies heterogeneous map values to one common type (string) when the
+  # map flows through an any-typed variable, silently stringifying the
+  # numbers too. Coerce back once, here, so nothing downstream has to.
+  traefik_listeners_normalized = {
+    for k, l in local.traefik_listeners : k => merge(l, {
+      port           = tonumber(l.port)
+      container_port = try(tonumber(l.container_port), null)
+    })
+  }
+
   # Distinct container ports -> one TG each.
-  traefik_tg_ports = distinct([for l in values(local.traefik_listeners) : coalesce(l.container_port, l.port)])
+  traefik_tg_ports = distinct([for l in values(local.traefik_listeners_normalized) : coalesce(l.container_port, l.port)])
 
   # ALB/NLB and target group names share AWS's 32-char hard limit. A long
   # cluster_name overflows it; truncate and append a hash of the full
@@ -113,7 +125,7 @@ resource "aws_lb_target_group" "traefik" {
 
 # One listener per entry in the listeners map.
 resource "aws_lb_listener" "traefik" {
-  for_each = local.addon_enabled.traefik && local.traefik_create_lb ? local.traefik_listeners : {}
+  for_each = local.addon_enabled.traefik && local.traefik_create_lb ? local.traefik_listeners_normalized : {}
 
   load_balancer_arn = aws_lb.traefik[0].arn
   port              = each.value.port
