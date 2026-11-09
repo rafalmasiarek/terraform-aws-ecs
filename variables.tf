@@ -198,6 +198,20 @@ variable "services" {
     ])
     error_message = "services[<key>].open_task_ports is set but has none of source_cidr_ipv4, source_cidr_ipv6, or source_security_group_id - it would silently open no ingress rule."
   }
+
+  validation {
+    condition = alltrue([
+      for k, v in var.services : try(v.open_task_ports.source_cidr_ipv4, null) == null || try(provider::netutils::cidr_family(v.open_task_ports.source_cidr_ipv4) == "ipv4", false)
+    ])
+    error_message = "services[<key>].open_task_ports.source_cidr_ipv4 must be a valid IPv4 CIDR."
+  }
+
+  validation {
+    condition = alltrue([
+      for k, v in var.services : try(v.open_task_ports.source_cidr_ipv6, null) == null || try(provider::netutils::cidr_family(v.open_task_ports.source_cidr_ipv6) == "ipv6", false)
+    ])
+    error_message = "services[<key>].open_task_ports.source_cidr_ipv6 must be a valid IPv6 CIDR."
+  }
 }
 
 variable "instance_role_permission_boundary_arn" {
