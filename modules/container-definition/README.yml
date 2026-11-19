@@ -1,0 +1,21 @@
+name: terraform-aws-ecs/modules/container-definition
+repo_url: https://github.com/rafalmasiarek/terraform-aws-ecs
+license: MIT
+
+context:
+  - "## About"
+  - |
+    Builds one ECS container definition JSON block (image, port
+    mappings, environment, logging, health check, ...). Called by the
+    caller directly, once per container, before passing the result into
+    the root [terraform-aws-ecs](../../) module's `services[*].container_definitions`.
+
+includes:
+  - docs/usage.md
+  - docs/terraform.md
+
+authors:
+  - name: Rafał Masiarek
+    email: rafal@masiarek.pl
+    github: rafalmasiarek
+    website: https://masiarek.pl

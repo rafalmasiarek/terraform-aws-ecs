@@ -1,0 +1,21 @@
+name: terraform-aws-ecs/modules/iam-role
+repo_url: https://github.com/rafalmasiarek/terraform-aws-ecs
+license: MIT
+
+context:
+  - "## About"
+  - |
+    Generic IAM role + managed/inline policy attachment helper - no
+    ECS-specific knowledge. Not currently called by the root
+    [terraform-aws-ecs](../../) module or any other submodule in this
+    repo; kept as a standalone, directly-callable building block.
+
+includes:
+  - docs/usage.md
+  - docs/terraform.md
+
+authors:
+  - name: Rafał Masiarek
+    email: rafal@masiarek.pl
+    github: rafalmasiarek
+    website: https://masiarek.pl

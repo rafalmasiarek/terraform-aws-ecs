@@ -1,11 +1,5 @@
 # terraform-aws-ecs
-
-
-
-
-
-
-
+![](https://raw.githubusercontent.com/rafalmasiarek/readme-gen/main/banners/.gitkeep)
 
 ## About
 
@@ -13,7 +7,27 @@ ECS cluster module: cluster, capacity providers, EC2 node groups, services, comp
 
 
 
+## License
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+```text
+The MIT License (MIT)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files, to deal in the Software
+without restriction.
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+Source: https://opensource.org/licenses/MIT
+```
+See [LICENSE](LICENSE) for full details.
+## Authors
+
+- Rafał Masiarek | [website](https://masiarek.pl) | [email](mailto:rafal@masiarek.pl) | [github](https://github.com/rafalmasiarek)
 
 
 ## Cluster add-ons
@@ -121,7 +135,7 @@ module "ecs" {
 ### Requirements
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.9.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0 |
 | <a name="requirement_tagger"></a> [tagger](#requirement\_tagger) | >= 0.1.0 |
@@ -129,7 +143,7 @@ module "ecs" {
 ### Modules
 
 | Name | Source | Version |
-|------|--------|---------|
+| ---- | ------ | ------- |
 | <a name="module_account_settings"></a> [account\_settings](#module\_account\_settings) | ./modules/account-settings | n/a |
 | <a name="module_addons"></a> [addons](#module\_addons) | ./modules/addons | n/a |
 | <a name="module_instance_least_privilege"></a> [instance\_least\_privilege](#module\_instance\_least\_privilege) | ./modules/iam-policy-documents | n/a |
@@ -142,7 +156,7 @@ module "ecs" {
 ### Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_ecs_capacity_provider.ec2](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_capacity_provider) | resource |
 | [aws_ecs_cluster.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_cluster) | resource |
 | [aws_ecs_cluster_capacity_providers.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_cluster_capacity_providers) | resource |
@@ -182,7 +196,7 @@ module "ecs" {
 ### Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_account_settings"></a> [account\_settings](#input\_account\_settings) | ECS account default settings (name => value) - account-wide and per-Region, explicit opt-in. See modules/account-settings for the writable names and allowed values. | `map(string)` | `{}` | no |
 | <a name="input_alb_security_group_id"></a> [alb\_security\_group\_id](#input\_alb\_security\_group\_id) | Security group of an existing ALB/NLB, if any - opens the ephemeral port range (32768-61000) from it to the cluster's own SG. This module never creates the load balancer itself. | `string` | `null` | no |
 | <a name="input_cloudwatch_log_group_kms_key_id"></a> [cloudwatch\_log\_group\_kms\_key\_id](#input\_cloudwatch\_log\_group\_kms\_key\_id) | KMS key ID for encrypting the execute-command CloudWatch log group. | `string` | `null` | no |
@@ -222,7 +236,7 @@ module "ecs" {
 ### Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_addons"></a> [addons](#output\_addons) | Add-on outputs per enabled preset (null when cluster\_addons is unset). |
 | <a name="output_capacity_provider_arns"></a> [capacity\_provider\_arns](#output\_capacity\_provider\_arns) | ARNs of the EC2 capacity providers, keyed by node group name. |
 | <a name="output_cloudwatch_log_group_name"></a> [cloudwatch\_log\_group\_name](#output\_cloudwatch\_log\_group\_name) | CloudWatch log group used for ECS exec logging. |
@@ -237,37 +251,6 @@ module "ecs" {
 | <a name="output_node_groups"></a> [node\_groups](#output\_node\_groups) | Node group outputs (ASG ARN/name), keyed by node group name. |
 | <a name="output_services"></a> [services](#output\_services) | Service outputs (name, task definition ARN/family), keyed by service name. |
 | <a name="output_topology_fragment"></a> [topology\_fragment](#output\_topology\_fragment) | Network topology fragment for composition with sibling modules via provider::netutils::mermaid\_merge(). See terraform-provider-netutils's docs/topology-fragment-spec.md. The ECS cluster itself is deliberately excluded - see node\_groups.tf. |
-
-
-
-## License
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
-```text
-The MIT License (MIT)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files, to deal in the Software
-without restriction.
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
-
-Source: https://opensource.org/licenses/MIT
-```
-
-
-See [LICENSE](LICENSE) for full details.
-
-
-## Authors
-
-- Rafał Masiarek | [website](https://masiarek.pl) | [email](mailto:rafal@masiarek.pl) | [github](https://github.com/rafalmasiarek)
-
-
 
 
 <!-- references -->

@@ -1,0 +1,22 @@
+name: terraform-aws-ecs/modules/iam-policy-documents
+repo_url: https://github.com/rafalmasiarek/terraform-aws-ecs
+license: MIT
+
+context:
+  - "## About"
+  - |
+    Builds an IAM policy JSON document (least-privilege ECR/execution
+    permissions) - a pure `data "aws_iam_policy_document"` wrapper, no
+    resources created. Called internally by the root
+    [terraform-aws-ecs](../../) module's task execution role setup - not
+    meant to be called standalone.
+
+includes:
+  - docs/usage.md
+  - docs/terraform.md
+
+authors:
+  - name: Rafał Masiarek
+    email: rafal@masiarek.pl
+    github: rafalmasiarek
+    website: https://masiarek.pl
