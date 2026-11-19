@@ -132,73 +132,57 @@ resource "aws_cloudwatch_dashboard" "this" {
 # ---------------------------------------------------------------------------
 
 # Alarm per addon service: running task count drops below threshold.
-resource "aws_cloudwatch_metric_alarm" "service_tasks_zero" {
+module "service_tasks_zero" {
   for_each = local.obs_enabled && try(local.obs_cfg.alarms, true) ? local.addon_services : {}
+  source   = "rafalmasiarek/cloudwatch/aws//modules/metric-alarm"
+  version  = ">= 0.1.0"
 
-  alarm_name          = "${var.cluster_name}-addon-${each.key}-tasks-zero"
-  comparison_operator = "LessThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "RunningTaskCount"
-  namespace           = "AWS/ECS"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 1
+  name               = "${var.cluster_name}-addon-${each.key}-tasks-zero"
+  alarm_description  = "Addon ${each.key} has fewer than 1 running task for 10 minutes."
+  evaluation_periods = 2
+  alarm_actions      = local.obs_all_alarm_actions
 
-  dimensions = {
-    ClusterName = var.cluster_name
-    ServiceName = "${var.cluster_name}-addon-${each.key}"
-  }
+  query = "SELECT RunningTaskCount FROM AWS/ECS WHERE ClusterName = '${var.cluster_name}' AND ServiceName = '${var.cluster_name}-addon-${each.key}' HAVING value < 1"
 
-  alarm_description = "Addon ${each.key} has fewer than 1 running task for 10 minutes."
-  alarm_actions     = local.obs_all_alarm_actions
-
-  tags = local.tagger_tags["obs-alarm-${each.key}"]
+  use_tagger     = var.use_tagger
+  tagger_context = var.tagger_context
+  tags           = var.tags
 }
 
 # Alarm: Node CPU sustained above threshold.
-resource "aws_cloudwatch_metric_alarm" "node_cpu_high" {
-  count = local.obs_enabled && try(local.obs_cfg.alarms, true) ? 1 : 0
+module "node_cpu_high" {
+  count   = local.obs_enabled && try(local.obs_cfg.alarms, true) ? 1 : 0
+  source  = "rafalmasiarek/cloudwatch/aws//modules/metric-alarm"
+  version = ">= 0.1.0"
 
-  alarm_name          = "${var.cluster_name}-node-cpu-high"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 3
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/EC2"
-  period              = 300
-  statistic           = "Average"
-  threshold           = try(local.obs_cfg.cpu_alarm_threshold, 80)
+  name               = "${var.cluster_name}-node-cpu-high"
+  alarm_description  = "Any node sustained >${try(local.obs_cfg.cpu_alarm_threshold, 80)}% CPU for 15 minutes."
+  evaluation_periods = 3
+  alarm_actions      = local.obs_all_alarm_actions
 
-  dimensions = {
-    AutoScalingGroupName = "${var.cluster_name}-*"
-  }
+  query = "SELECT CPUUtilization FROM AWS/EC2 WHERE AutoScalingGroupName = '${var.cluster_name}-*' HAVING value > ${try(local.obs_cfg.cpu_alarm_threshold, 80)}"
 
-  alarm_description = "Any node sustained >${try(local.obs_cfg.cpu_alarm_threshold, 80)}% CPU for 15 minutes."
-  alarm_actions     = local.obs_all_alarm_actions
-
-  tags = local.tagger_tags["obs-alarm-node-cpu"]
+  use_tagger     = var.use_tagger
+  tagger_context = var.tagger_context
+  tags           = var.tags
 }
 
 # Alarm: Node memory sustained above threshold.
-resource "aws_cloudwatch_metric_alarm" "node_memory_high" {
-  count = local.obs_enabled && try(local.obs_cfg.alarms, true) ? 1 : 0
+module "node_memory_high" {
+  count   = local.obs_enabled && try(local.obs_cfg.alarms, true) ? 1 : 0
+  source  = "rafalmasiarek/cloudwatch/aws//modules/metric-alarm"
+  version = ">= 0.1.0"
 
-  alarm_name          = "${var.cluster_name}-node-memory-high"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 3
-  metric_name         = "MemoryUtilization"
-  namespace           = "AWS/EC2"
-  period              = 300
-  statistic           = "Average"
-  threshold           = try(local.obs_cfg.memory_alarm_threshold, 90)
+  name               = "${var.cluster_name}-node-memory-high"
+  alarm_description  = "Any node sustained >${try(local.obs_cfg.memory_alarm_threshold, 90)}% memory for 15 minutes."
+  evaluation_periods = 3
+  alarm_actions      = local.obs_all_alarm_actions
 
-  dimensions = {
-    AutoScalingGroupName = "${var.cluster_name}-*"
-  }
+  query = "SELECT MemoryUtilization FROM AWS/EC2 WHERE AutoScalingGroupName = '${var.cluster_name}-*' HAVING value > ${try(local.obs_cfg.memory_alarm_threshold, 90)}"
 
-  alarm_description = "Any node sustained >${try(local.obs_cfg.memory_alarm_threshold, 90)}% memory for 15 minutes."
-  alarm_actions     = local.obs_all_alarm_actions
-
-  tags = local.tagger_tags["obs-alarm-node-mem"]
+  use_tagger     = var.use_tagger
+  tagger_context = var.tagger_context
+  tags           = var.tags
 }
 
 # ---------------------------------------------------------------------------
