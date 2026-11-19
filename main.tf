@@ -17,8 +17,6 @@ locals {
     }
   }
 
-  cloudwatch_log_group_name = "/aws/ecs/${var.name}"
-
   exec_s3_bucket_create = try(var.exec_command_s3.bucket.create, false) == true
   exec_s3_bucket_name = var.exec_command_s3 == null ? null : (
     try(var.exec_command_s3.bucket.name, null) != null
@@ -34,7 +32,7 @@ locals {
   exec_logging_enabled = var.create_cloudwatch_log_group || var.cloudwatch_log_group_name != null || var.exec_command_s3 != null
   # Only the guessed name when the log group actually exists or is named
   # explicitly - never a blind guess pointing execute_command at nothing.
-  exec_cwl_name = var.create_cloudwatch_log_group ? try(aws_cloudwatch_log_group.this[0].name, null) : var.cloudwatch_log_group_name
+  exec_cwl_name = var.create_cloudwatch_log_group ? try(module.log_group[0].log_group_name, null) : var.cloudwatch_log_group_name
 
   exec_s3_bucket_arn = local.exec_s3_bucket_name == null ? null : (
     local.exec_s3_bucket_create ? try(aws_s3_bucket.exec[0].arn, null) : "arn:aws:s3:::${local.exec_s3_bucket_name}"
@@ -77,14 +75,19 @@ resource "aws_ecs_cluster" "this" {
   tags = local.tagger_tags["this"]
 }
 
-resource "aws_cloudwatch_log_group" "this" {
-  count = var.create_cloudwatch_log_group ? 1 : 0
+module "log_group" {
+  count   = var.create_cloudwatch_log_group ? 1 : 0
+  source  = "rafalmasiarek/cloudwatch/aws//modules/log-group"
+  version = ">= 0.1.0"
 
-  name              = local.cloudwatch_log_group_name
+  service           = "ecs"
+  name              = var.name
   retention_in_days = var.cloudwatch_log_group_retention_in_days
   kms_key_id        = var.cloudwatch_log_group_kms_key_id
 
-  tags = local.tagger_tags["this"]
+  use_tagger     = var.use_tagger
+  tagger_context = var.tagger_context
+  tags           = var.tags
 }
 
 # Also consumed by iam.tf's instance_awslogs policy.

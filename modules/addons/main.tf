@@ -82,17 +82,6 @@ locals {
       created_at = null
       extra_tags = {}
     } },
-    # CloudWatch log groups (one per awsvpc addon with an awslogs driver).
-    { for k in keys(local.addon_services) : "loggroup-${k}" => {
-      name       = "/aws/ecs/${var.cluster_name}/addons/${k}"
-      service    = { container = { cluster = var.cluster_name } }
-      attributes = ["addon", k, "log-group"]
-      created_at = null
-      extra_tags = {}
-      } if contains([
-        "traefik", "opentelemetry", "cloudwatch_agent",
-        "node_exporter", "cadvisor", "falco", "blackbox_exporter",
-    ], k) },
     # Traefik ingress stack (create mode only).
     local.addon_enabled.traefik && local.traefik_create_lb ? {
       traefik-lb = {
@@ -141,29 +130,6 @@ locals {
         name       = coalesce(try(try(var.cluster_addons.observability, {}).sns_topic_name, null), "${var.cluster_name}-addons-alerts")
         service    = { container = { cluster = var.cluster_name } }
         attributes = ["observability", "sns"]
-        created_at = null
-        extra_tags = {}
-      }
-    } : {},
-    { for k in keys(local.addon_services) : "obs-alarm-${k}" => {
-      name       = "${var.cluster_name}-addon-${k}-tasks-zero"
-      service    = { container = { cluster = var.cluster_name } }
-      attributes = ["observability", "alarm"]
-      created_at = null
-      extra_tags = {}
-    } if local.addon_enabled.observability && try(try(var.cluster_addons.observability, {}).alarms, true) },
-    local.addon_enabled.observability && try(try(var.cluster_addons.observability, {}).alarms, true) ? {
-      obs-alarm-node-cpu = {
-        name       = "${var.cluster_name}-node-cpu-high"
-        service    = { container = { cluster = var.cluster_name } }
-        attributes = ["observability", "alarm"]
-        created_at = null
-        extra_tags = {}
-      }
-      obs-alarm-node-mem = {
-        name       = "${var.cluster_name}-node-memory-high"
-        service    = { container = { cluster = var.cluster_name } }
-        attributes = ["observability", "alarm"]
         created_at = null
         extra_tags = {}
       }
