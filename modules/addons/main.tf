@@ -261,7 +261,7 @@ locals {
     for p in local.traefik_tg_ports : p => (
       p == 80 ? "web" : p == 443 ? "websecure" : try(
         [
-          for l in values(local.traefik_listeners) :
+          for l in values(local.traefik_listeners_normalized) :
           l.entrypoint_name if coalesce(try(l.container_port, null), l.port) == p && try(l.entrypoint_name, null) != null
         ][0],
         "ep${p}"
@@ -508,7 +508,18 @@ locals {
     local.traefik_create_lb ? try(aws_lb_target_group.traefik[443].arn, null) : try(local.traefik_cfg.ingress.target_group_arn_443, null)
   ) : null
 
-  traefik_load_balancers = concat(
+  # Create mode: one registration per actual listener port (traefik_tg_ports
+  # already covers every one, not just 80/443 - this used to hardcode just
+  # those two, so a target group for any other port never got a target).
+  # Existing mode only ever had 80/443 to begin with (the caller's own two
+  # ARNs), unchanged.
+  traefik_load_balancers = local.traefik_create_lb ? [
+    for p in local.traefik_tg_ports : {
+      target_group_arn = aws_lb_target_group.traefik[p].arn
+      container_name   = "traefik"
+      container_port   = p
+    }
+    ] : concat(
     local.traefik_tg_arn_80 != null ? [{ target_group_arn = local.traefik_tg_arn_80, container_name = "traefik", container_port = 80 }] : [],
     local.traefik_tg_arn_443 != null ? [{ target_group_arn = local.traefik_tg_arn_443, container_name = "traefik", container_port = 443 }] : [],
   )
