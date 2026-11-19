@@ -5,8 +5,8 @@ on:
     branches: [main]
     paths:
       - "**.tf"
-      - "README.yml"
-      - ".terraform-docs.yml"
+      - "**README.yml"
+      - "**.terraform-docs.yml"
   schedule:
     - cron: "0 2 1 * *"
   workflow_dispatch:
@@ -20,7 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Generate Terraform docs
+      - name: Generate Terraform docs (recursive)
         uses: terraform-docs/gh-actions@v1.4.1
         with:
           working-dir: .
@@ -28,16 +28,22 @@ jobs:
           output-file: docs/terraform.md
           output-method: replace
           template: ""
+          recursive: true
+          recursive-path: modules
 
       - name: Fix workspace ownership
         run: sudo chown -R "$(id -u):$(id -g)" .
 
-      - name: Generate README
-        uses: rafalmasiarek/readme-gen@latest
-        with:
-          config: README.yml
-          output: README.md
-          version: latest
+      - name: Generate READMEs
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/rafalmasiarek/readme-gen/main/bin/readmegen -o /tmp/readmegen
+          curl -fsSL https://raw.githubusercontent.com/rafalmasiarek/readme-gen/main/README.md.template -o /tmp/README.md.template
+          chmod +x /tmp/readmegen
+          find . -name README.yml -not -path '*/.terraform/*' | while read -r f; do
+            dir=$(dirname "$f")
+            /tmp/readmegen --config "$f" --template /tmp/README.md.template --output "$dir/README.md" --version main
+          done
 
       - name: Git Auto-Commit
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -47,4 +53,4 @@ jobs:
           commit_user_name: "github-actions[bot]"
           commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
           commit_author: "github-actions[bot] <actions@github.com>"
-          file_pattern: "README.md docs/terraform.md"
+          file_pattern: "README.md docs/terraform.md modules/**/README.md modules/**/docs/terraform.md"

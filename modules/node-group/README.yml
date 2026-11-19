@@ -1,0 +1,22 @@
+name: terraform-aws-ecs/modules/node-group
+repo_url: https://github.com/rafalmasiarek/terraform-aws-ecs
+license: MIT
+
+context:
+  - "## About"
+  - |
+    EC2 launch template + Auto Scaling Group sized for ECS capacity -
+    resolves the ECS-optimized AMI (Amazon Linux 2023, x86_64 or arm64)
+    via SSM unless `ami_id` is given explicitly. Called internally by the
+    root [terraform-aws-ecs](../../) module via `var.node_groups` - not
+    meant to be called standalone.
+
+includes:
+  - docs/usage.md
+  - docs/terraform.md
+
+authors:
+  - name: Rafał Masiarek
+    email: rafal@masiarek.pl
+    github: rafalmasiarek
+    website: https://masiarek.pl
