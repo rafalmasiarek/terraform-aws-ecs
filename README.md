@@ -133,6 +133,7 @@ module "ecs" {
 | <a name="module_account_settings"></a> [account\_settings](#module\_account\_settings) | ./modules/account-settings | n/a |
 | <a name="module_addons"></a> [addons](#module\_addons) | ./modules/addons | n/a |
 | <a name="module_instance_least_privilege"></a> [instance\_least\_privilege](#module\_instance\_least\_privilege) | ./modules/iam-policy-documents | n/a |
+| <a name="module_log_group"></a> [log\_group](#module\_log\_group) | rafalmasiarek/cloudwatch/aws//modules/log-group | >= 0.1.0 |
 | <a name="module_node_group"></a> [node\_group](#module\_node\_group) | ./modules/node-group | n/a |
 | <a name="module_service"></a> [service](#module\_service) | ./modules/service | n/a |
 | <a name="module_tagger"></a> [tagger](#module\_tagger) | rafalmasiarek/tagger/null | >= 0.7.0 |
@@ -142,7 +143,6 @@ module "ecs" {
 
 | Name | Type |
 |------|------|
-| [aws_cloudwatch_log_group.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
 | [aws_ecs_capacity_provider.ec2](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_capacity_provider) | resource |
 | [aws_ecs_cluster.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_cluster) | resource |
 | [aws_ecs_cluster_capacity_providers.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_cluster_capacity_providers) | resource |
