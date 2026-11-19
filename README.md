@@ -236,6 +236,7 @@ module "ecs" {
 | <a name="output_exec_s3_bucket_name"></a> [exec\_s3\_bucket\_name](#output\_exec\_s3\_bucket\_name) | S3 bucket used for ECS exec logging, if enabled. |
 | <a name="output_node_groups"></a> [node\_groups](#output\_node\_groups) | Node group outputs (ASG ARN/name), keyed by node group name. |
 | <a name="output_services"></a> [services](#output\_services) | Service outputs (name, task definition ARN/family), keyed by service name. |
+| <a name="output_topology_fragment"></a> [topology\_fragment](#output\_topology\_fragment) | Network topology fragment for composition with sibling modules via provider::netutils::mermaid\_merge(). See terraform-provider-netutils's docs/topology-fragment-spec.md. The ECS cluster itself is deliberately excluded - see node\_groups.tf. |
 
 
 
