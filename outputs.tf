@@ -65,6 +65,11 @@ output "ecs_infrastructure_role_arn" {
   value       = local.ecs_infrastructure_role_arn
 }
 
+output "topology_fragment" {
+  description = "Network topology fragment for composition with sibling modules via provider::netutils::mermaid_merge(). See terraform-provider-netutils's docs/topology-fragment-spec.md. The ECS cluster itself is deliberately excluded - see node_groups.tf."
+  value       = local.topology_fragment
+}
+
 output "addons" {
   description = "Add-on outputs per enabled preset (null when cluster_addons is unset)."
   value = var.cluster_addons == null ? null : {
