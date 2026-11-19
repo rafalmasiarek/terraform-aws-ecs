@@ -1,7 +1,17 @@
 # terraform-aws-ecs
+
+
+
+
+
+
+
+
 ## About
 
 ECS cluster module: cluster, capacity providers, EC2 node groups, services, composable IAM, cluster security group, and optional infrastructure add-ons.
+
+
 
 
 
@@ -227,6 +237,8 @@ module "ecs" {
 | <a name="output_node_groups"></a> [node\_groups](#output\_node\_groups) | Node group outputs (ASG ARN/name), keyed by node group name. |
 | <a name="output_services"></a> [services](#output\_services) | Service outputs (name, task definition ARN/family), keyed by service name. |
 
+
+
 ## License
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -248,9 +260,13 @@ Source: https://opensource.org/licenses/MIT
 
 
 See [LICENSE](LICENSE) for full details.
+
+
 ## Authors
 
 - Rafał Masiarek | [website](https://masiarek.pl) | [email](mailto:rafal@masiarek.pl) | [github](https://github.com/rafalmasiarek)
+
+
 
 
 <!-- references -->
