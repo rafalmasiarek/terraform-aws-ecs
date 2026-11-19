@@ -49,3 +49,33 @@ module "node_group" {
   tags           = var.tags
   origin_module  = "node-group"
 }
+
+locals {
+  # Network topology fragment for composition with sibling modules via
+  # provider::netutils::mermaid_merge() - see
+  # https://github.com/rafalmasiarek/terraform-provider-netutils/blob/main/docs/topology-fragment-spec.md
+  #
+  # The ECS cluster itself is deliberately NOT part of this fragment: it
+  # has no ENI and sits on no network path, same exclusion as an IAM
+  # role or a flow-log config. Only each node group's ASG is represented
+  # - singular vs. plural attachment, same rule as the standalone
+  # terraform-aws-ec2-autoscale-group module, except var.vpc_id is
+  # already a required input here, so no topology-only variable is
+  # needed to supply the common ancestor.
+  topology_fragment = {
+    entities = [
+      for k, v in var.node_groups : {
+        id     = module.node_group[k].autoscaling_group_arn
+        label  = "${var.name}-${k}"
+        kind   = "autoscaling-group"
+        parent = length(v.subnet_ids) == 1 ? v.subnet_ids[0] : var.vpc_id
+      }
+    ]
+    edges = flatten([
+      for k, v in var.node_groups : length(v.subnet_ids) > 1 ? [
+        for subnet_id in v.subnet_ids :
+        { from = module.node_group[k].autoscaling_group_arn, to = subnet_id, kind = "deployed-in", label = null }
+      ] : []
+    ])
+  }
+}
