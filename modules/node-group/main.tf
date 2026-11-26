@@ -267,7 +267,7 @@ locals {
 
 module "nodes" {
   source  = "rafalmasiarek/ec2-autoscale-group/aws"
-  version = "0.3.0"
+  version = "0.4.0"
 
   name          = var.name
   ami_id        = local.resolved_ami_id
